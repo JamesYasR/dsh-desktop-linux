@@ -25,8 +25,10 @@ dsh-desktop-linux/
 │   ├── apply-patches.sh
 │   ├── build.sh
 │   ├── dev-desktop.sh
-│   └── verify.sh
+│   ├── verify.sh
+│   └── aur-dir.sh            # 摊平成可直接 makepkg / 提交 AUR 的目录
 ├── PKGBUILD
+├── deepseek-harness-desktop.install   # pacman 脚本片段（chrome-sandbox / AppArmor）
 └── .github/workflows/build.yml
 ```
 
@@ -45,6 +47,26 @@ dsh-desktop-linux/
 
 每次只出被点名的格式。整条流水线（`build:official` / `release:pack` / `prepare:*`）才是耗时大头，
 多打一种格式只多一次 fpm/AppImage 打包，所以分开跑更快，也更容易定位失败。
+
+### Arch 包（PKGBUILD）
+
+PKGBUILD 直接吃上游的 release 源码包，不依赖 `./upstream` 检出：
+
+```bash
+./scripts/aur-dir.sh                     # 摊平到 ./aur（默认），生成 .SRCINFO
+cd aur
+makepkg -C -s --nocheck                  # -C：重新构建时先清 $srcdir
+```
+
+`aur-dir.sh` 不是可有可无的糖：**makepkg 只在 `$startdir` 里按 basename 找本地 source**，
+`source=('patches/0001-….patch')` 会直接报 `was not found in the build directory and is not a URL`
+（实测）。所以 AUR 目录必须是 PKGBUILD + 补丁平铺在一起，仓库里保留 `patches/` 只是为了补丁
+系列本身可读。`./aur` 里的内容就是可以直接提交的 AUR 包。
+
+PKGBUILD 只出未打包目录（`package:linux:x64:dir`），把 `linux-unpacked` 装进
+`/opt/deepseek-harness-desktop`，`/usr/bin/deepseek-harness` 做符号链接——Arch 包不需要再套一层
+AppImage/deb/rpm。因此也不需要 `DSH_DESKTOP_LINUX_MAINTAINER` / `_HOMEPAGE`（那是 fpm 的
+control 文件要的）。
 
 dev 模式（阶段 1，已验证可起窗口）：
 
@@ -81,7 +103,9 @@ dev 模式（阶段 1，已验证可起窗口）：
 
 - **必须用 pnpm 11.x**（仓库要求 `packageManager: pnpm@11.7.0`）。系统 pnpm 9 会在
   `pnpm install` 报 `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`——`pnpm-workspace.yaml` 用了
-  pnpm 10+ 的 `overrides` / `allowBuilds` / `minimumReleaseAgeExclude`。
+  pnpm 10+ 的 `overrides` / `allowBuilds` / `minimumReleaseAgeExclude`。pnpm 11 会自己切到
+  `packageManager` 指定的版本（Arch 的 `pnpm` 11.26 实测会下载并改用 11.7.0），所以
+  `makedepends=('pnpm')` 就够了，PKGBUILD 只校验主版本号 ≥ 11。
 - **`dev:desktop` 前必须先跑一次 `pnpm run build`**。`dev.ts` 的 import 是静态提升的，
   会在它自己那次构建之前解析 `lib/`，干净树上直接跑会 `ERR_MODULE_NOT_FOUND`。
 - **dev 模式也需要 `patches/0001`**。`dev.ts` 虽然不碰 `package-target.ts`，但它调用
@@ -97,7 +121,7 @@ dev 模式（阶段 1，已验证可起窗口）：
 | 1 | dev 模式验证（窗口能否弹出） | **完成：窗口正常弹出**，详见 `docs/findings.md` |
 | 2 | 定位打包失败点，打补丁 | **完成：链路推进到 `prepare:dsh`**，卡在 sharp 段错误 |
 | 3 | 原生模块（node-pty / sharp） | **完成：Linux 上 Host 改走 primary-runtime 的真 Node**，sharp 解码正常 |
-| 4 | 产物：AppImage → deb → rpm → PKGBUILD | **进行中**：AppImage / deb / rpm 三种都产出并验过包元数据；PKGBUILD 未做 |
+| 4 | 产物：AppImage → deb → rpm → PKGBUILD | **完成**：三种产物 + Arch 包（PKGBUILD）全部产出并实测 |
 | 5 | 验证矩阵（协议、profile 隔离、端口） | 部分提前验证：`dsh-app://` 正常、`profiles/desktop` 隔离、19387 端口一致 |
 | 6 | 回到上游 Discussion 汇报 | 未开始 |
 
@@ -132,9 +156,18 @@ AppImage 交给 AppRun 的 user-namespace 探测，deb / rpm 交给 `postinst` /
 （内核支持 unprivileged user namespace 就用 namespace 沙箱，不支持才退回 setuid `chrome-sandbox`）。
 详见 `docs/findings.md` 的阶段 4 一节。
 
+Arch 包（`./scripts/aur-dir.sh` + `makepkg`）：
+
+| 产物 | 大小 |
+|---|---|
+| `deepseek-harness-desktop-0.1.7rc2-1-x86_64.pkg.tar.zst` | 351M（安装后 1071MiB） |
+
+`namcap` 0 error；`pacman -U` 装上后窗口正常起、19387 端口监听、渲染进程有沙箱、`pacman -R`
+卸载无残留。依赖表是算出来的（ldd 的 93 个 soname 全部被已声明 `depends` 的传递闭包覆盖），
+不是照抄 Debian 的包名。
+
 ## 未决事项
 
-- **PKGBUILD 还没在干净的 makepkg 环境里验证**。deb / rpm 已在阶段 4 打通。
 - **强制更新策略通道 Linux 不参与**：策略服务只认 `desktop-win` / `desktop-mac` 客户端身份，
   Linux 没有对应身份，而且 Linux 产物没有更新通道。所以 Linux 版不嵌入策略、不轮询，
   也不需要任何 `DSH_MANDATORY_UPDATE_*` 设置。若将来上游补上 Linux 身份，放开

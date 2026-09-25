@@ -18,3 +18,6 @@ node_modules/
 
 # 测试用 DSH_HOME
 /dsh-home/
+
+# AUR 摊平目录（由 scripts/aur-dir.sh 生成）
+/aur/

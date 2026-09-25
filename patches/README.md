@@ -5,8 +5,10 @@
 组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
 互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成。
 
-已验证：在 pristine worktree 上 11 个补丁按序 `git apply` 全部干净通过，
-结果与开发工作树逐字节一致（41 个文件全部 `cmp` 相同）。
+已验证：在 pristine worktree 上 12 个补丁按序 `git apply` 全部干净通过，
+结果与开发工作树逐字节一致（43 个文件全部 `cmp` 相同）。同一组补丁用
+`patch -Np1` 打在上游 release 源码包（tag `dsh-v0.1.7-rc.2`）上也全部干净，
+这正是 PKGBUILD 的 `prepare()` 做的事。
 
 ## 阶段 2：让 Linux 成为受支持的 target
 
@@ -28,11 +30,12 @@
 | `0009-desktop-packaging-host-runtime.patch` | `scripts/dev.ts`、`scripts/smoke-{runtime,prepared-runtime,packaged-runtime}.ts`、`scripts/sign-primary-runtime.ts`、`tests/fixtures/runtime-payload-smoke.mjs`、`tests/prepared-runtime-smoke.spec.ts` | 把 Host 运行时贯穿 dev / 打包 / 冒烟；payload smoke 的 Electron 专属断言改为按平台判断 |
 | `0010-desktop-linux-policy-opt-out.patch` | `desktop-policy-environment.{mjs,d.mts}`、`tests/desktop-policy-environment.spec.ts` | 新增 `desktopPlatformEmbedsPolicy()`：策略服务只认 `desktop-win` / `desktop-mac`，Linux 不参与 |
 
-## 阶段 4：产物（AppImage / deb / rpm）
+## 阶段 4：产物（AppImage / deb / rpm / PKGBUILD）
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
 | `0011-desktop-linux-package-metadata.patch` | `desktop-linux-packages.{mjs,d.mts}`、`tests/desktop-linux-packages.spec.ts` | 新增 `resolveDesktopLinuxFormats()`（`DSH_DESKTOP_TARGET_FORMATS`，缺省只出 AppImage）与 `resolveDesktopLinuxPackageMetadata()`（deb/rpm 必须给 `Name <email>` 形式的 maintainer 和绝对 http(s) homepage，两者一起报错） |
+| `0012-desktop-build-commit-release-archive.patch` | `desktop-build-commit.mjs`、`tests/desktop-build-commit.spec.ts` | `readDesktopBuildCommit()` 在目录不是 git checkout 时读 `DSH_DESKTOP_BUILD_COMMIT` / `_DIRTY`，两者都没有才报错。上游从 checkout 构建，distro 打包从 release 源码包构建，后者没有 `.git` |
 
 `0003` 消费 `0011`，`0005` 也消费 `0011`：格式选择和包元数据的**规则**只有一份（`0011`），
 `0003` 拿去配 electron-builder，`0005` 拿去做打包最前面的预检。按「一个文件只属于一个补丁」，
@@ -51,5 +54,10 @@
 - **`DSH_DESKTOP_TARGET_FORMATS` 刻意不进 `.env.linux` 白名单**。它是「这次构建打什么」的
   选择器（和 `DSH_DESKTOP_TARGET_PLATFORM` / `_ARCH` 同类），不是发布设置；进了文件反而会让
   `build.sh --deb` 被文件里的值盖掉。
+- **`0012` 是唯一为「非 git 源码」存在的补丁**。上游两条路都要 git：`scripts/build.ts` 经
+  `repositoryCommitHash()` 读 `HEAD`（有 `DSH_CLIENT_COMMIT_HASH` 环境变量出口，不用改），
+  `package-target.ts:364` 无条件调 `readDesktopBuildCommit()`（没有出口，所以要 `0012`）。
+  PKGBUILD 从 release 源码包构建，所以两个变量都由它显式给出，`_DIRTY=1` 也是事实——这个
+  构建确实打了补丁。
 
 详见 `docs/findings.md`。

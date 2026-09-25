@@ -677,6 +677,91 @@ rpm:      Exec="/opt/DeepSeek Harness/deepseek-harness" %U
 仍然无沙箱的场景只剩「宿主机不支持 user namespace」——那时 AppRun 会自己补 flag，
 这是环境所限，不是我们主动关掉的。
 
+### PKGBUILD：Arch 包（以及为什么不用 electron-builder 自带的 pacman target）
+
+electron-builder 有 `target: 'pacman'`，但它的默认依赖表是 Electron 2 时代的
+（`FpmTarget.js` 的 `getDefaultDepends('pacman')`）：`c-ares` `ffmpeg` `gtk3` `http-parser`
+`libevent` `libvpx` `libxslt` `libxss` `minizip` `nss` `re2` `snappy` `libnotify`
+`libappindicator-gtk3`。`http-parser` / `re2` / `snappy` 早就不在 Electron 的依赖里；
+`libappindicator-gtk3` 在 Arch 官方仓库里也已经没有了（现在叫 `libayatana-appindicator`），
+而且实测打包后的 `deepseek-harness` 里根本没有 appindicator 相关的字符串，只有
+`StatusNotifierItem` / `StatusNotifierWatcher`（Chromium 自带的 DBus 实现）——这个包不需要它。
+所以手写 PKGBUILD。
+
+**源码用 release 源码包，不用 `git+`。** 两个选项都实测过：
+
+| | release tarball | `git+…#tag=` |
+|---|---|---|
+| 下载体积 | 32MB | 242MB（makepkg 做 `git clone --mirror`，实测 36 秒） |
+| 校验 | sha256 固定 | makepkg 用 `git archive` 算，tag 本身不可变 |
+| 额外补丁 | 需要 0012 | 不需要 |
+
+代价是 release 源码包里没有 `.git`，而上游有两条路都要 git：
+`scripts/build.ts` 经 `repositoryCommitHash()` 读 `HEAD`——它有 `DSH_CLIENT_COMMIT_HASH`
+出口，不用改；`package-target.ts:364` 无条件调 `readDesktopBuildCommit()`——没有出口，
+所以要补丁 0012。PKGBUILD 显式给三个变量：
+
+```
+DSH_CLIENT_COMMIT_HASH=$_commit
+DSH_DESKTOP_BUILD_COMMIT=$_commit
+DSH_DESKTOP_BUILD_DIRTY=1
+```
+
+`_DIRTY=1` 不是将就：这个构建确实打了 12 个补丁，`dshBuildDirty` 记 `true` 是事实。
+顺带验证了没有 `.git` 时其余环节是安全的：`lefthook` 的 postinstall 和
+`scripts/install-lefthook.mjs` 都在 `git rev-parse` 失败时直接返回。
+
+**补丁必须平铺在 PKGBUILD 旁边。** makepkg 的 `get_filepath()` 用 `get_filename()`
+（basename）在 `$startdir` 里找本地 source，实测：
+
+```
+source=('sub/deep.patch')
+==> ERROR: deep.patch was not found in the build directory and is not a URL.
+```
+
+所以 `source=('patches/0001-….patch')` 是不行的。`scripts/aur-dir.sh` 把 PKGBUILD、
+`.install` 和 12 个补丁摊平到一个目录（默认 `./aur`，已 gitignore），那里面就是可以直接提交
+AUR 的内容；仓库里保留 `patches/` 只是为了让补丁系列本身可读。
+
+**`prepare()` 必须能从失败中重跑。** makepkg 只在成功时清 `$srcdir`
+（`clean_up()` 里 `EXIT_CODE == E_OK && BUILDPKG && CLEANUP`）。失败重跑时它会重新解包源码包，
+把补丁改过的文件恢复原状，**却留下补丁新增的文件**（0005 的 `.env.linux.example`）——于是 0005
+变成「一半已应用」，`patch -N` 正反向都打不上。中间试过干跑探测，还踩了一个坑：
+`patch --batch --dry-run` 遇到「新增文件已存在」会自动 `Assume -R` 并返回 0，于是真的去应用、
+然后失败（`-N` 才是既抑制询问又给对退出码的写法）。最终改成在 `prepare()` 里直接从源码包重建
+工作树；代价是重跑会丢掉 `.desktop-build` 里的 Electron 下载缓存（~120MB）。
+
+**安装布局用 `/opt/deepseek-harness-desktop`（无空格），不是上游 deb/rpm 的
+`/opt/DeepSeek Harness`。** `.desktop`、图标名、`StartupWMClass`、可执行文件名都照上游
+（`deepseek-harness`）；只有 AppArmor profile 里的路径要改。
+
+这里踩到一个实测出来的坑：**`resources/apparmor-profile` 是 fpm 的 deb/rpm target 写进
+linux-unpacked 的**（`FpmTarget` 里 `copyFile(scripts.appArmor, resourceDir/apparmor-profile)`），
+只出 `--dir` 的构建没有这个文件。第一版 `package()` 去 sed 它，直接
+`sed: can't read …/resources/apparmor-profile: No such file or directory`——整条构建跑了十分钟，
+倒在最后一步。现在 profile 内容直接写在 PKGBUILD 里。图标没有这个问题：
+`resources/icon.png` 是 `--dir` 构建自带的（1024×1024）。
+
+**依赖是算出来的，不是抄的。** 起点是上游 deb control 里那 9 个（`libgtk-3-0` `libnotify4`
+`libnss3` `libxss1` `libxtst6` `xdg-utils` `libatspi2.0-0` `libuuid1` `libsecret-1-0`），
+换成 Arch 包名，再加上 ldd 显示、而 Debian 那边由传递依赖带来的 `alsa-lib` / `dbus`
+（libuuid 在 Arch 属于 `util-linux`，在 base 里，不列）。验证方法：`ldd` 主二进制拿到 93 个
+soname，对已声明 `depends` 的传递闭包（177 个官方仓库包）求覆盖——**全覆盖**。
+
+`namcap`：**0 error**，只剩两类 warning——「dependency X detected and implicitly satisfied」
+（传递依赖，正常），以及「`libnotify` / `libxss` / `libxtst` / `xdg-utils` / `libsecret`
+可能不需要」。这五个正是上游自己声明的运行时依赖，通过 dlopen / exec 使用，namcap 看不到。
+
+**pnpm 版本不用管。** 仓库声明 `packageManager: pnpm@11.7.0`，Arch 的 `pnpm`（11.26）会自己
+切过去——实测在仓库里 `pnpm --version` 输出 `11.7.0`。所以 `makedepends=('pnpm')` 就够，
+PKGBUILD 只校验主版本号 ≥ 11。`makedepends` 里的 `python` 是 node-gyp 的后备：实测这次构建
+一个原生模块都没编（node-pty / sharp / koffi / native-system 全部命中预编译产物）。
+
+**构建需要网络**：源码包、npm 包、Electron 二进制，以及 `prepare:runtime` 下载的
+primary-runtime（Node + pnpm + Python）。本机访问 github 需要代理，那是本机环境，与 PKGBUILD
+无关——第一次跑就是因为我把它从环境里剥掉，才在 `prepare:runtime` 撞上
+`ConnectTimeoutError: github.com:443`。
+
 ### 结果
 
 ```
@@ -693,6 +778,37 @@ configuration ✓ → toolchain ✓ → build:official ✓ → release:pack ✓
 | `…-linux-x86_64-unsigned.rpm` | 233M |
 
 `./scripts/verify.sh`：10 通过 / 0 失败。
+
+Arch 包（PKGBUILD）：
+
+```
+sources+sha256 ✓ → prepare() 12 个补丁 ✓ → pnpm install ✓ → build:official ✓
+→ release:pack ✓ → prepare:runtime ✓ → prepare:packages ✓ → prepare:dsh ✓
+→ electron-builder --dir ✓ → smoke:packaged ✓ → package() ✓
+```
+
+| 产物 | 大小 |
+|---|---|
+| `deepseek-harness-desktop-0.1.7rc2-1-x86_64.pkg.tar.zst` | 351M（安装后 1071MiB，24902 个文件） |
+
+`namcap`：0 error。`pacman -U` 装上后实测：`/usr/bin/deepseek-harness` →
+`/opt/deepseek-harness-desktop/deepseek-harness`，窗口正常起（Welcome 页），19387 端口监听，
+Host 进程是 `resources/runtime/primary-runtime/dependencies/node/bin/node`（即 primary-runtime
+自带的真 Node，和阶段 3 的结论一致），渲染进程在独立 user namespace（`4026533617`）且 seccomp
+生效，`chrome-sandbox` 保持 0755——内核支持非特权 user namespace 时按上游 postinst 的判断不装
+SUID。`post_upgrade` 也实测过：先把 `chrome-sandbox` 改成 4755，重装一次，脚本片段又把它改回
+0755。`pacman -R` 卸载无残留。
+
+干净环境验证：从 `archlinux-bootstrap` 起了一个只有 base + base-devel + makedepends 的 chroot
+（`nodejs` `pnpm` `python`，运行库只装 PKGBUILD 里 `depends` 声明的那几个），在里面跑
+`makepkg`。走通的部分：源码包下载 + sha256、12 个补丁、`pnpm install --frozen-lockfile`
+（**冷 store，`.npmrc` 里只有 registry，没有 `allow-scripts`**——也就是说构建脚本白名单确实由
+仓库的 `pnpm-workspace.yaml` 提供，不依赖开发机配置）、`build:official`、`release:pack`、
+`prepare:runtime`、`prepare:packages`，以及 `prepare:dsh` 里那次打包期 `pnpm install`。
+最后倒在 `prepare:dsh` 把 node_modules 拷进 app 目录那一步：宿主 btrfs 已经写满
+（`Device unallocated: 1 MiB`，`df` 报的 17G 是 chunk 内的剩余，btrfs 分配不出新 metadata chunk），
+报 `ENOSPC`。这是磁盘限制不是 PKGBUILD 问题——剩下的 `electron-builder --dir` 和 `package()`
+在宿主上跑通了（`package()` 里那个 apparmor 坑就是第一次宿主跑出来的）。
 
 ## 补丁清单
 
