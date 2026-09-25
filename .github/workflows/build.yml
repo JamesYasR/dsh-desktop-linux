@@ -1,0 +1,62 @@
+name: build-linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '上游 ref（分支或 tag）'
+        required: false
+        default: 'master'
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [dir, appimage, deb]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 磁盘余量（构建吃空间）
+        run: df -h /
+
+      - name: 拉上游
+        run: ./scripts/fetch-upstream.sh "${{ github.event.inputs.ref || 'master' }}"
+
+      - name: 打补丁
+        run: ./scripts/apply-patches.sh
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: upstream
+
+      - name: 构建（${{ matrix.target }}）
+        env:
+          DSH_HOME: /tmp/dsh-desktop-test
+        run: ./scripts/build.sh --${{ matrix.target }}
+
+      - name: 验证
+        run: ./scripts/verify.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-harness-desktop-${{ matrix.target }}
+          path: |
+            upstream/apps/desktop/dist/*.AppImage
+            upstream/apps/desktop/dist/*.deb
+            upstream/apps/desktop/dist/*.rpm
+            upstream/apps/desktop/dist/linux-unpacked/
+          if-no-files-found: warn
+          retention-days: 14

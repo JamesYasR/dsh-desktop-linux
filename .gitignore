@@ -1,0 +1,20 @@
+# 上游检出（由 scripts/fetch-upstream.sh 生成，不入库）
+/upstream/
+
+# 构建产物
+dist/
+release/
+*.AppImage
+*.deb
+*.rpm
+*.tar.zst
+pkg/
+src/
+
+# 依赖与缓存
+node_modules/
+.pnpm-store/
+.electron-cache/
+
+# 测试用 DSH_HOME
+/dsh-home/
