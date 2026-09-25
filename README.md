@@ -69,12 +69,18 @@ dev 模式（阶段 1，已验证可起窗口）：
 
 ## 当前阻塞
 
-`sharp` 的 PNG **解码**在 Electron 44 / Linux 下段错误（编码正常，同样的代码在系统 Node 下正常）。
-根因是 sharp 官方记录过的 Electron/Linux 冲突：Electron 动态链接系统 glib 并把符号泄漏进进程空间
-（upstream: electron#46323）。这挡住了 `prepare:dsh` 的运行时冒烟，因此还产不出 `linux-unpacked`。
+`sharp` 的 PNG **解码**在 Electron 的 **node 模式**（`ELECTRON_RUN_AS_NODE=1`）下段错误。
+编码正常；同样的代码在系统 Node、以及 Electron **GUI 模式**下都正常。
+根因是 sharp 官方记录过的 Electron/Linux 冲突：Electron 动态链接系统 glib 并把符号泄漏进
+进程空间（upstream: electron#46323）。
 
-候选方向见 `docs/findings.md`（换 WASM sharp / 把图像处理挪到 primary-runtime 的真 Node /
-等 upstream 修），需要决策。
+**这不是测试假阳性**：dsh 运行时正是跑在 node 模式里
+（`apps/desktop-host/src/index.ts:36` 设 `ELECTRON_RUN_AS_NODE=1`，上游 README 也这么写），
+所以 Linux 上图像附件路径会把 Host 打崩。这挡住了 `prepare:dsh` 的运行时冒烟，
+因此还产不出 `linux-unpacked`。
+
+好消息：primary-runtime 里**本来就带一个真 Node**（`dependencies/node/bin/node`，24.21.0，
+`electron=none`），sharp 在它下面实测正常。候选解法与取舍见 `docs/findings.md`，需要决策。
 
 ## 纪律
 

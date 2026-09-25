@@ -271,18 +271,57 @@ Electron 进程空间里已经加载了系统 glib，sharp 自带的 libvips
 > 注意这是**版本相关**的：sharp 文档说的是 "may cause"。在 glib 版本与 libvips
 > 期望更接近的发行版上可能不复现。本机 Arch + glib 2.88.3 稳定复现。
 
-### 这个阻塞点不是白名单能修的
+### 崩溃只发生在 Electron 的 **node 模式**，而 dsh 运行时正好跑在这个模式里
 
-前 7 个补丁都是「把已有支持放出来」形状的改动，这一个不是。候选方向（需要决策，尚未验证）：
+继续做变量分离，得到一个决定性的对照：
 
-1. **换 WASM sharp**（`@img/sharp-wasm32`）——绕开原生 libvips 与 glib，代价是性能与功能覆盖。
-2. **把图像处理挪出 Electron 进程**——primary-runtime 里本来就带一个**真正的 Node**
-   （`primary-runtime/dependencies/node`），sharp 在真 Node 下正常。但要改上游的运行时分工。
-3. **接受冒烟失败**，在补丁里让 Linux 跳过 `checkSharp`——这会把一个真实的崩溃藏起来，
-   而 `sharp` 在桌面端是图像附件/图片卸载路径上的依赖，**不建议**。
+| 运行环境 | sharp 解码 | 备注 |
+|---|---|---|
+| 系统 Node v26.9.0 | ✅ | |
+| Electron 44 **GUI 模式**（`electron <app>`） | ✅ `decode ok: 1 1 3` | 实测最小 GUI app |
+| Electron 44 **node 模式**（`ELECTRON_RUN_AS_NODE=1`） | ❌ SIGSEGV | |
+| primary-runtime 里的**真 Node 24.21.0** | ✅ | `dependencies/node/bin/node`，`process.versions.electron === undefined` |
+
+也就是说：**GUI 主进程解码图像没问题，崩的是 Electron 的 Node 模式。**
+
+坏消息是这个模式恰恰就是 dsh 运行时用的：
+
+- `apps/desktop-host/src/index.ts:36` 在拉起 Host 时设 `ELECTRON_RUN_AS_NODE: '1'`
+- 上游 `apps/desktop/README.md:64` 原文：
+  > dsh runs under Electron with `ELECTRON_RUN_AS_NODE=1` and `--expose-internals`
+- `scripts/node-bin/node` 本身就是个壳：`export ELECTRON_RUN_AS_NODE=1; exec "$DSH_DESKTOP_NODE_EXECUTABLE" --expose-internals "$@"`
+
+所以 `sharp` 在桌面端的图像附件 / 图片卸载路径上会在 Linux 上把 Host 打崩。
+**这不是测试假阳性**——冒烟测试（`tests/fixtures/runtime-payload-smoke.mjs`）正是为了
+「在真正会跑的那个运行时下验证 payload」而存在的，它抓对了。
+
+### 一个已经在产物里的解法方向
+
+`prepare:runtime` 生成的 primary-runtime **本来就带一个真 Node**：
+
+```
+.desktop-build/targets/linux-x64/runtime/primary-runtime/dependencies/node/bin/node
+$ …/node -p "process.versions.node + ' electron=' + (process.versions.electron ?? 'none')"
+24.21.0 electron=none
+$ ELECTRON_RUN_AS_NODE= …/node /tmp/sharp-decode.mjs "$T/dsh"     # 同一个脚本
+>>> decoded 1 1 3                                                  EXIT=0
+```
+
+它已经在包里、已经按 target 准备好了（Node 归档来自 `scripts/primary-runtime/lock.json`
+的 `linux-x64` 条目），只是现在被 `runtime/bin/node` 这个 Electron 壳挡在外面。
+
+候选方向（需要决策，均未验证）：
+
+1. **Linux 上让 Host 走 primary-runtime 的真 Node**，而不是 Electron node 模式。
+   代价最小、证据最足——真 Node 已在产物里，且 sharp 在它下面实测正常。
+   代价是要改上游的运行时分工（`desktop-host` 的 `process.execPath` 选择）。
+2. **换 WASM sharp**（`@img/sharp-wasm32`）——绕开原生 libvips 与 glib，代价是性能与功能覆盖。
+3. **接受冒烟失败**，在补丁里让 Linux 跳过 `checkSharp`——把真实崩溃藏起来，**不建议**。
 4. 等 upstream 修 electron#46323。
 
 **在解决之前，`package:linux:x64:dir` 无法走完**，因此还没有 `linux-unpacked` 产物。
+`prepare:dsh` 的失败清理会删掉 `.desktop-build/targets/linux-x64/dsh`；
+要保留它做实验，用 `pnpm --dir apps/desktop run prepare:dsh -- --defer-runtime-smoke`。
 
 ### 另一个需要产品决策的点：Linux 的 mandatory-update policy origin
 
