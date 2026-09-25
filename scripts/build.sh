@@ -2,10 +2,8 @@
 # 在 ./upstream 里构建 Linux 桌面端。
 #
 #   ./scripts/build.sh --dir        # 只出未打包目录（快，先验证能不能起来）
-#   ./scripts/build.sh              # 默认 AppImage
-#   ./scripts/build.sh --deb        # deb
-#   ./scripts/build.sh --rpm        # rpm
-#   ./scripts/build.sh --all        # AppImage + deb + rpm
+#   ./scripts/build.sh              # 默认 AppImage（已验证可运行）
+#   # --deb / --rpm / --all 还没实现，传了会明确报错
 #
 # 环境变量：
 #   DSH_DESKTOP_LINUX_HOME  隔离的 dsh 数据目录，默认 /tmp/dsh-desktop-test
@@ -44,9 +42,12 @@ MODE="${1:---appimage}"
 case "$MODE" in
   --dir)      SCRIPT="package:linux:x64:dir" ;;
   --appimage) SCRIPT="package:linux:x64" ;;
-  --deb)      SCRIPT="package:linux:x64" ;;
-  --rpm)      SCRIPT="package:linux:x64" ;;
-  --all)      SCRIPT="package:linux:x64" ;;
+  --deb|--rpm|--all)
+    # 上游的 linux.target 目前只有 AppImage；deb/rpm 还没接（electron-builder 的 deb/rpm 走 fpm，
+    # 需要包元数据 maintainer/homepage，rpm 还额外需要系统装 rpmbuild）。这里明确拒绝，
+    # 而不是静默只出 AppImage。见 docs/findings.md「仍未解决」。
+    echo "错误：$MODE 还没实现。当前只有 AppImage（默认）与 --dir（未打包目录）。" >&2
+    exit 2 ;;
   *) echo "未知参数：$MODE" >&2; exit 2 ;;
 esac
 
@@ -71,4 +72,4 @@ if ! find "$UPSTREAM/node_modules" -name 'pty.node' -print -quit 2>/dev/null | g
 fi
 
 "$PNPM" --dir "$UPSTREAM/apps/desktop" run "$SCRIPT"
-echo "==> 完成，产物见 $UPSTREAM/apps/desktop/.desktop-build/targets/linux-x64/artifacts"
+echo "==> 完成，产物见 $UPSTREAM/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts"

@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index bab440e..78f6a30 100644
+index bab440e..29825f1 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -22,7 +22,7 @@ import {
@@ -32,7 +32,16 @@ index bab440e..78f6a30 100644
    const packagesMacOS = targetPlatform === 'darwin' || (targetPlatform === undefined && hostPlatform === 'darwin')
    const packagesWindows = resolvedPlatform === 'win32'
    if (resolvedPlatform === 'win32') installWindowsDirectoryInstaller()
-@@ -110,7 +113,10 @@ export function createElectronBuilderConfig(
+@@ -103,6 +106,8 @@ export function createElectronBuilderConfig(
+     extraMetadata: {
+       dshDesktopAppId: appId,
+       dshMandatoryUpdatePolicy: policy,
++      // Read by Electron as the window app_id and by the Linux target as the .desktop filename.
++      ...(resolvedPlatform === 'linux' ? { desktopName: 'deepseek-harness' } : {}),
+       ...buildVersion === productVersion ? {} : { version: buildVersion },
+       ...packaged === undefined ? {} : { dshBuildCommit: packaged.commit, dshBuildDirty: packaged.dirty },
+     },
+@@ -110,7 +115,10 @@ export function createElectronBuilderConfig(
      // Unsigned builds carry their own suffix so a shared file can never pass for a release artifact.
      artifactName: `deepseek-harness-\${version}-\${os}-\${arch}${unsigned ? '-unsigned' : ''}.\${ext}`,
      directories: { output: unsigned ? buildPaths.unsignedArtifacts : buildPaths.artifacts },
@@ -44,12 +53,15 @@ index bab440e..78f6a30 100644
      electronDist: buildPaths.electron,
      electronFuses: { runAsNode: true },
      beforeBuild: async () => {
-@@ -230,6 +236,8 @@ export function createElectronBuilderConfig(
+@@ -230,6 +238,11 @@ export function createElectronBuilderConfig(
      },
      linux: {
        category: 'Development',
 +      // electron-builder otherwise derives the command from the scoped package name.
 +      executableName: 'deepseek-harness',
++      // Electron derives the window app_id from desktopName, and StartupWMClass has to match it for a
++      // desktop environment to associate the running window with this entry.
++      syncDesktopName: true,
        target: ['AppImage'],
      },
      nsis: {

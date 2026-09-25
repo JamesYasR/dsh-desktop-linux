@@ -64,7 +64,7 @@ dev 模式（阶段 1，已验证可起窗口）：
 | 1 | dev 模式验证（窗口能否弹出） | **完成：窗口正常弹出**，详见 `docs/findings.md` |
 | 2 | 定位打包失败点，打补丁 | **完成：链路推进到 `prepare:dsh`**，卡在 sharp 段错误 |
 | 3 | 原生模块（node-pty / sharp） | **完成：Linux 上 Host 改走 primary-runtime 的真 Node**，sharp 解码正常 |
-| 4 | 产物：AppImage → deb → rpm → PKGBUILD | **进行中**：`linux-unpacked` 已产出并实测能起窗口；AppImage 构建中，deb / rpm / PKGBUILD 未验证 |
+| 4 | 产物：AppImage → deb → rpm → PKGBUILD | **进行中**：AppImage 已产出并实测能起窗口；deb / rpm / PKGBUILD 未做 |
 | 5 | 验证矩阵（协议、profile 隔离、端口） | 部分提前验证：`dsh-app://` 正常、`profiles/desktop` 隔离、19387 端口一致 |
 | 6 | 回到上游 Discussion 汇报 | 未开始 |
 
@@ -87,7 +87,8 @@ configuration ✓ → toolchain ✓ → build:official ✓ → release:pack ✓
 
 ## 未决事项
 
-- **deb / rpm / PKGBUILD 还没验证**，目前只有 AppImage。
+- **deb / rpm 还没接**：需要 `linux.maintainer` 与 `homepage`（真实身份，只有维护者能给），
+  rpm 还需要系统装 `rpmbuild`。PKGBUILD 也还没在干净 makepkg 环境里验证。
 - **强制更新策略通道 Linux 不参与**：策略服务只认 `desktop-win` / `desktop-mac` 客户端身份，
   Linux 没有对应身份，而且 Linux 产物没有更新通道。所以 Linux 版不嵌入策略、不轮询，
   也不需要任何 `DSH_MANDATORY_UPDATE_*` 设置。若将来上游补上 Linux 身份，放开

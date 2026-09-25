@@ -437,15 +437,31 @@ Host 进程的 executable 就是 primary-runtime 的真 Node，runtimeDir 是打
 正文 `Welcome to DeepSeek Harness` + `Sign in` / `Add API Key`。
 产物里 `dshMandatoryUpdatePolicy` 字段已不存在。
 
+### 桌面集成：窗口与 .desktop 的关联
+
+electron-builder 会警告 `desktopName is not set in package.json`。Electron 从
+`desktopName` 推导窗口 app_id，`StartupWMClass` 必须与之匹配，桌面环境才能把运行中的
+窗口关联到这个 .desktop 条目。已设 `extraMetadata.desktopName = 'deepseek-harness'`
+与 `linux.syncDesktopName: true`。
+
 ### 仍未解决 / 待办（阶段 3 结束时）
 
-- **deb / rpm / PKGBUILD 未验证**。目前只有 AppImage（`linux.target = ['AppImage']`）。
+- **deb / rpm 还没接**。`linux.target` 目前只有 `AppImage`。
+  electron-builder 的 deb/rpm 走 fpm，要求 `linux.maintainer` 与 `homepage` 两个包元数据
+  （本仓库的 `package.json` 既没有 `author` 也没有 `homepage`，fpm 会直接报
+  `authorEmailIsMissed` / `Please specify project homepage`）；rpm 还额外需要系统装
+  `rpmbuild`（本机没有，Arch 上是 `rpm-tools`）。maintainer 是要写进 Debian control 的
+  真实身份，属于需要产品输入的信息，所以没有先塞占位值。`build.sh --deb/--rpm/--all`
+  会明确报错而不是静默只出 AppImage。
+- **AppImage 以 `--no-sandbox` 运行**。这是 electron-builder 对 AppImage 的默认行为
+  （squashfs 挂载里的 `chrome-sandbox` 没法是 setuid root），生成的 .desktop 里
+  `Exec=AppRun --no-sandbox %U`。也就是说 AppImage 版本没有 Chromium 沙箱——
+  这正是 deb 有价值的地方（deb 里 `chrome-sandbox` 能装成 setuid root）。
+  发 AppImage 前需要决定：接受无沙箱，还是改用 unprivileged user namespace 沙箱。
+- **PKGBUILD 未在干净的 makepkg 环境里验证**。
 - `desktopUpdateMetadataFilename` 仍拒绝 `linux`。Linux 走 unsigned 不经过它；
   将来要 Linux 更新通道才需要动。
-- 非 unsigned 的 Linux 构建路径没有明确拒绝，会在后半程以奇怪的理由失败
-  （`validateDesktopPackageEnvironment` 会先去要 `DOWNLOAD_TEST_ORIGIN`）。
-  当前 `package:linux:x64` 固定带 `--unsigned`，所以没被触发。
-- `linux-unpacked` 约 1.1G（asar 关闭后是小文件目录树）。AppImage 会压成 squashfs，
+- `linux-unpacked` 约 1.1G（asar 关闭后是小文件目录树）。AppImage 压成 squashfs 后 339M，
   但首次启动的文件读取比 asar 多。
 
 ## 补丁清单

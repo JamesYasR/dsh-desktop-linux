@@ -64,7 +64,7 @@ index b0d7bc2..c158004 100644
    options?: { unsigned?: boolean, prepareOnly?: boolean },
  ): void
 diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
-index 3addf3f..e978f04 100644
+index 3addf3f..9a26a7a 100644
 --- a/apps/desktop/scripts/desktop-package-environment.mjs
 +++ b/apps/desktop/scripts/desktop-package-environment.mjs
 @@ -7,7 +7,7 @@ import { parseEnv } from 'node:util'
@@ -105,7 +105,7 @@ index 3addf3f..e978f04 100644
        throw new Error(`desktop package: unsupported setting ${name} in ${path}; use the platform template`)
      }
      if (settings[name].includes('\0')) throw new Error(`desktop package: ${name} cannot contain a NUL character`)
-@@ -72,16 +73,16 @@ function requireReadableFile(environment, name) {
+@@ -72,16 +73,21 @@ function requireReadableFile(environment, name) {
  /**
   * Validate release configuration before preparation without invoking a token or Apple's services.
   * @param {NodeJS.ProcessEnv} environment File-owned release settings.
@@ -122,10 +122,15 @@ index 3addf3f..e978f04 100644
    if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
 -  else resolveWindowsPackageSettings(environment)
 +  else if (target.platform === 'win32') resolveWindowsPackageSettings(environment)
++  // Linux artifacts carry no signature and no update channel, so this target is always unsigned.
++  // Failing here names the reason instead of surfacing a missing download origin much later.
++  if (target.platform === 'linux' && !options.unsigned) {
++    throw new Error('desktop package: Linux artifacts are unsigned; pass --unsigned')
++  }
    if (options.unsigned) return
    if (!options.prepareOnly) resolveDesktopAutoUpdateConfig(environment, target.platform, target.arch)
    if (target.platform === 'win32') {
-@@ -92,7 +93,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+@@ -92,7 +98,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
        keyContainer: environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER,
      })
      if (!options.prepareOnly) resolveWindowsSignatureCacheDirectory(environment)
