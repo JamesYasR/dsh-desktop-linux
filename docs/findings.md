@@ -295,50 +295,164 @@ Electron 进程空间里已经加载了系统 glib，sharp 自带的 libvips
 **这不是测试假阳性**——冒烟测试（`tests/fixtures/runtime-payload-smoke.mjs`）正是为了
 「在真正会跑的那个运行时下验证 payload」而存在的，它抓对了。
 
-### 一个已经在产物里的解法方向
+### 解法（已实施）：Linux 上让 Host 走 primary-runtime 的真 Node
 
-`prepare:runtime` 生成的 primary-runtime **本来就带一个真 Node**：
+见下面「阶段 3」一节。
 
-```
-.desktop-build/targets/linux-x64/runtime/primary-runtime/dependencies/node/bin/node
-$ …/node -p "process.versions.node + ' electron=' + (process.versions.electron ?? 'none')"
-24.21.0 electron=none
-$ ELECTRON_RUN_AS_NODE= …/node /tmp/sharp-decode.mjs "$T/dsh"     # 同一个脚本
->>> decoded 1 1 3                                                  EXIT=0
-```
-
-它已经在包里、已经按 target 准备好了（Node 归档来自 `scripts/primary-runtime/lock.json`
-的 `linux-x64` 条目），只是现在被 `runtime/bin/node` 这个 Electron 壳挡在外面。
-
-候选方向（需要决策，均未验证）：
-
-1. **Linux 上让 Host 走 primary-runtime 的真 Node**，而不是 Electron node 模式。
-   代价最小、证据最足——真 Node 已在产物里，且 sharp 在它下面实测正常。
-   代价是要改上游的运行时分工（`desktop-host` 的 `process.execPath` 选择）。
-2. **换 WASM sharp**（`@img/sharp-wasm32`）——绕开原生 libvips 与 glib，代价是性能与功能覆盖。
-3. **接受冒烟失败**，在补丁里让 Linux 跳过 `checkSharp`——把真实崩溃藏起来，**不建议**。
-4. 等 upstream 修 electron#46323。
-
-**在解决之前，`package:linux:x64:dir` 无法走完**，因此还没有 `linux-unpacked` 产物。
-`prepare:dsh` 的失败清理会删掉 `.desktop-build/targets/linux-x64/dsh`；
-要保留它做实验，用 `pnpm --dir apps/desktop run prepare:dsh -- --defer-runtime-smoke`。
-
-### 另一个需要产品决策的点：Linux 的 mandatory-update policy origin
-
-`resolveDesktopPolicyEnvironment` 在 `--unsigned` 提前返回**之前**执行，所以即使是
-unsigned 的 Linux 构建也**必须**提供 `DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN`
-（或 PROD），且 test 部署还要求 `allowedAuthOrigins` 非空。
-
-目前 `apps/desktop/.env.linux` 里用的是占位值 `https://example.invalid`。
-它只影响打包产物里的 `dshMandatoryUpdatePolicy` 元数据，不影响构建能否完成，
-但**发布前必须替换成真实决策**（真实 origin，或者为 Linux 明确关掉这条策略）。
 
 ---
+---
+
+## 2026-09-26 · 阶段 3 · 打通打包到可运行产物 —— **通过**
+
+### 决策
+
+采用候选方向 1：**Linux 上让 Host 跑在 primary-runtime 自带的真 Node 上**；
+macOS / Windows 不变，继续用 Electron 的 node 模式。
+
+证据链支持这个选择：真 Node 已经在产物里、已按 target 准备好，sharp 在它下面实测正常；
+而 Electron 的 node 模式在 Linux 上必然把宿主机的 glib 链进自己的进程空间（electron#46323），
+这不是靠白名单能绕开的。
+
+### 实现：把「Host 运行时」变成一等概念（补丁 0008）
+
+`apps/desktop/src/node-environment.ts` 是这条规则的唯一归属地：
+
+```ts
+export function desktopNodeRuntime(platform, electron, primaryRuntime): DesktopNodeRuntime {
+  if (platform !== 'linux') return { executable: electron, electron: true }
+  return { executable: join(primaryRuntime, 'dependencies', 'node', 'bin', 'node'), electron: false }
+}
+```
+
+`electron` 字段不只是描述，它决定 `ELECTRON_RUN_AS_NODE` 要不要设。
+这一步必须一起改：`pnpm` 内嵌的 `node-gyp-build` 系 `isElectron()` 读的就是这个变量，
+真 Node 被标成 Electron 时它会去挑 electron ABI 的 prebuild。共三处：
+
+- `desktopNodeEnvironment()`：只有 Electron 运行时才设 `ELECTRON_RUN_AS_NODE`；
+  standalone 时设 `DSH_DESKTOP_NODE_ELECTRON=0`。
+- `scripts/node-bin/node` 壳：`[ "${DSH_DESKTOP_NODE_ELECTRON:-1}" = 1 ]` 才 export。
+  **默认值 1 是刻意的**——调用方清空环境时不会带上这个变量，缺省必须回落到 Electron 行为，
+  否则 macOS / Windows 的包脚本会以 GUI 模式起 Electron。
+- `apps/desktop-host/src/index.ts`：用 `process.versions.electron` 判断自己跑在哪个运行时下。
+
+`RuntimeResources.node` 改名 `electron`（它本来就是 Electron 可执行文件），
+Host 用哪个运行时由 `main.ts` 在构造 `DesktopHostProcess` 时解析并传入。
+
+### 打包链路也必须用同一个运行时（补丁 0009）
+
+`prepare:dsh` 里的 `pnpm install` 和 `runtime:smoke` 原先都拿 target 的 Electron 跑。
+payload 的原生模块是按「谁来加载它」解析的，所以这两处也要用 Host 运行时，
+否则会装出 electron ABI 的 prebuild、再拿真 Node 去 load。
+
+`versions.json` 的 `node` 字段语义随之明确为「payload 实际运行的 Node 版本」：
+Linux 记 primary-runtime 的 24.21.0，macOS / Windows 仍记 Electron 的 Node。
+`tests/fixtures/runtime-payload-smoke.mjs` 里那两处 Electron 专属断言相应改成按平台判断。
+
+### 产物布局：asar 与真 Node 不兼容（补丁 0010）
+
+`prepare:dsh` 通过后 electron-builder 能出 `linux-unpacked`，但**打包后的 smoke 立刻失败**：
+
+```
+Error: ENOTDIR: not a directory, open '…/resources/app.asar/dsh/desktop-runtime.json'
+```
+
+这不是测试的问题，是产品的问题：`host-process.ts` 用 `resources.dsh`
+（= `app.getAppPath() + '/dsh'`）当 Host 的 runtimeDir，Electron 能透明读 asar，**真 Node 不能**。
+
+所以 Linux 上不用 asar（`asar: resolvedPlatform !== 'linux'`）：
+`resources/app/dsh` 就是一棵真目录树，`runtimeArchivePath()` 自然返回 undefined，
+`installOfficeEngineResolution()` 的重定向也不再需要。
+代价是丢掉 `verifyRuntimeArchive()` 的归档校验，改为在 `smoke-packaged-runtime.ts`
+里对打包后的真目录树跑一次 `verifyDesktopRuntime()`。
+
+顺带修掉一个 Linux 打包缺陷：electron-builder 默认拿 package name 当可执行文件名，
+产出的是 `@deepseek-aidsh-desktop`。现在显式 `linux.executableName = 'deepseek-harness'`。
+
+### mandatory-update 策略：Linux 不参与（补丁 0011，取代上一轮的「需要产品决策」）
+
+上一轮记录的是「policy origin 必填，占位值发布前要换成真实值」。查到实情后结论变了。
+
+**策略服务没有 Linux 客户端身份。** 身份由 `desktopClientHeaders()` 决定：
+
+```ts
+// packages/credentials/deepseek-account/src/index.ts:138
+export function desktopClientHeaders(platform: 'darwin' | 'win32' | null) {
+  if (platform === null) return {}
+  return { 'x-client-platform': platform === 'win32' ? 'desktop-win' : 'desktop-mac' }
+}
+```
+
+只有 `desktop-win` / `desktop-mac` 两种，`main.ts:1244` 也显式把策略限制在 win32 / darwin。
+再加上 Linux 产物是 unsigned（`update === undefined`、`publish: null`），根本没有更新通道，
+策略决定驱动不了任何动作。
+
+所以 Linux 的正确行为是**不嵌入策略、不轮询**：新增 `desktopPlatformEmbedsPolicy(platform)`，
+`validateDesktopPackageEnvironment()` 和 `createElectronBuilderConfig()` 都用它。
+占位 origin 因此彻底消失——Linux 不再需要任何 `DSH_DESKTOP_MANDATORY_UPDATE_*` 设置。
+将来若 upstream 给策略服务加上 Linux 身份，放开这个判定即可。
+
+顺带修掉 `validateDesktopPackageEnvironment()` 里 `win32 ? … : macOS` 的隐含假设，
+改成 win32 / darwin / 其余不适用。
+
+### 一个必须记下来的操作陷阱：DSH_HOME
+
+本机的 DSH 会话自己把 `DSH_HOME` 指向用户真实的 `~/.dsh`。
+仓库脚本原先写的是 `${DSH_HOME:-/tmp/dsh-desktop-test}`，于是**继承了那个值**，
+构建会往正在使用的数据目录里写东西。现在三个脚本都只读 `DSH_DESKTOP_LINUX_HOME`，
+并在 `DSH_HOME == $HOME/.dsh` 时直接退出。
+
+（本轮实测：`~/.dsh/profiles/` 下没有 `desktop`，也没有本轮时间窗内的写入。）
+
+### 结果
+
+```
+configuration ✓ → toolchain ✓ → build:official ✓ → release:pack ✓
+→ prepare:runtime ✓ → prepare:packages ✓ → prepare:dsh ✓ → package ✓ → smoke:packaged ✓
+```
+
+关键日志：
+
+```
+{"node":"24.21.0","platform":"linux","arch":"x64","koffi":true,"sharp":true,"html":true,"pty":true,"pnpm":true,"grep":true,"glob":true}
+desktop runtime: DOCX, XLSX, PPTX to PDF and skill CLI discovery passed
+  • executing @electron/fuses  electronPath=…/linux-unpacked/deepseek-harness
+```
+
+（同一个 payload smoke 跑了两遍：一遍对 `.desktop-build/…/dsh`，一遍对打包后的
+`resources/app/dsh`。`"sharp":true` 就是最初那个段错误的位置。）
+
+打包后的应用实测能起来：
+
+```
+$ DSH_HOME=/tmp/dsh-desktop-pkg ./deepseek-harness
+LISTEN 127.0.0.1:19387  users:(("MainThread",pid=330076))
+$ ps -eo cmd | grep dsh-desktop-host
+…/resources/runtime/primary-runtime/dependencies/node/bin/node --expose-internals \
+  …/resources/app/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js …
+```
+
+Host 进程的 executable 就是 primary-runtime 的真 Node，runtimeDir 是打包后的真目录树。
+窗口截图确认：标题 `DeepSeek Harness`、菜单 `Application | Edit`、
+正文 `Welcome to DeepSeek Harness` + `Sign in` / `Add API Key`。
+产物里 `dshMandatoryUpdatePolicy` 字段已不存在。
+
+### 仍未解决 / 待办（阶段 3 结束时）
+
+- **deb / rpm / PKGBUILD 未验证**。目前只有 AppImage（`linux.target = ['AppImage']`）。
+- `desktopUpdateMetadataFilename` 仍拒绝 `linux`。Linux 走 unsigned 不经过它；
+  将来要 Linux 更新通道才需要动。
+- 非 unsigned 的 Linux 构建路径没有明确拒绝，会在后半程以奇怪的理由失败
+  （`validateDesktopPackageEnvironment` 会先去要 `DOWNLOAD_TEST_ORIGIN`）。
+  当前 `package:linux:x64` 固定带 `--unsigned`，所以没被触发。
+- `linux-unpacked` 约 1.1G（asar 关闭后是小文件目录树）。AppImage 会压成 squashfs，
+  但首次启动的文件读取比 asar 多。
 
 ## 补丁清单
 
 全部相对上游 `477b4f4`，一个文件只属于一个补丁，按文件名顺序应用。
-已验证：在 pristine worktree 上 7 个补丁按序 `git apply` 全部干净通过，且结果与开发工作树逐字节一致。
+每个补丁都单独在 pristine worktree 上验证过：按序 `git apply` 全部干净通过，
+结果与开发工作树逐字节一致。
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
@@ -349,21 +463,10 @@ unsigned 的 Linux 构建也**必须**提供 `DSH_DESKTOP_MANDATORY_UPDATE_TEST_
 | `0005-desktop-linux-release-settings.patch` | `desktop-package-environment.{mjs,d.mts}`、`desktop-toolchain-preflight.ts`、`.gitignore`、`.env.linux.example` | 读 `.env.linux`；Linux 不套用 Windows/macOS 专属设置；工具链探测与类型联合接受 `linux` |
 | `0006-desktop-package-linux-scripts.patch` | `apps/desktop/package.json` | 加 `package:linux:x64` / `package:linux:x64:dir`（都带 `--unsigned`） |
 | `0007-tests-linux-x64-supported.patch` | 3 个 `tests/*.spec.ts` | 把「断言 Linux 抛错」改成「断言 Linux 受支持」，并补 `desktopElectronExecutablePath` 的用例 |
-
-补丁 0007 单独跑过：`vitest run` 三个 spec 全绿（41 tests）。补丁应用后
-`tsc -b tsconfig.host.json` 全绿（0 errors）。
-
-### 仍未解决 / 待办
-
-- **sharp 在 Electron 下的解码段错误**（本轮唯一硬阻塞，见上）。
-- Linux 的 mandatory-update policy origin 需产品决策。
-- `prepare-dsh.ts` 里 `const target = { platform: process.platform, … }` 用的是**构建主机**平台。
-  在 Linux x64 主机上构建 linux-x64 恰好正确，但构建 linux-arm64 会错。本轮未改（保持最小补丁）。
-- `desktopUpdateMetadataFilename` 仍拒绝 `linux`——目前只有 upload plan 与 macOS 打包用得到，
-  Linux 走 unsigned（`update === undefined`）不经过它。若将来要 Linux 更新通道，需一并改。
-
-
----
+| `0008-desktop-host-runtime-linux-standalone-node.patch` | `node-environment.ts`、`host-process.ts`、`main.ts`、`desktop-host/src/index.ts`、`scripts/node-bin/node`、`smoke-runtime.ts`、`sign-primary-runtime.ts`、`tests/node-environment.spec.ts`、`tests/host-process.spec.ts`、`tests/prepared-runtime-smoke.spec.ts`、`tests/welcome-flow.e2e.ts`、`apps/cli/tests/desktop-host.e2e.ts` | 引入 `DesktopNodeRuntime`；Linux 上 Host 走 primary-runtime 的真 Node；`ELECTRON_RUN_AS_NODE` 只在真 Electron 运行时下设置 |
+| `0009-desktop-prepare-under-host-runtime.patch` | `prepare-dsh.ts`、`prepare-runtime.ts`、`dev.ts`、`smoke-prepared-runtime.ts`、`smoke-packaged-runtime.ts`、`tests/fixtures/runtime-payload-smoke.mjs` | 打包期的 `pnpm install` 与运行时 smoke 改用 Host 运行时；`versions.json.node` 记为 payload 实际运行的 Node 版本 |
+| `0010-desktop-linux-unpacked-application.patch` | `electron-builder-config.mjs`、`smoke-packaged-runtime.ts` | Linux 关闭 asar（真 Node 读不了归档）+ 显式 `executableName`；打包后对真目录树做完整性校验 |
+| `0011-desktop-linux-policy-opt-out.patch` | `desktop-policy-environment.{mjs,d.mts}`、`desktop-package-environment.mjs`、`electron-builder-config.mjs`、`.env.linux.example`、`tests/desktop-policy-environment.spec.ts` | 新增 `desktopPlatformEmbedsPolicy()`；Linux 不嵌入、不轮询强制更新策略；修掉 `win32 ? … : macOS` 的隐含假设 |
 
 ## 背景速查（来自 BRIEF.md）
 

@@ -1,0 +1,67 @@
+diff --git a/apps/desktop/scripts/desktop-policy-environment.d.mts b/apps/desktop/scripts/desktop-policy-environment.d.mts
+index 7b2230a..18878cd 100644
+--- a/apps/desktop/scripts/desktop-policy-environment.d.mts
++++ b/apps/desktop/scripts/desktop-policy-environment.d.mts
+@@ -7,6 +7,13 @@ export interface DesktopPolicyEnvironment {
+   [key: string]: unknown
+ }
+ 
++/**
++ * Report whether one release target embeds and polls the mandatory-update policy.
++ * @param platform Target platform.
++ * @returns True when the target embeds the policy.
++ */
++export function desktopPlatformEmbedsPolicy(platform: NodeJS.Platform): boolean
++
+ /**
+  * Resolve policy settings before artifact preparation or signing.
+  * @param environment File-owned release settings; only the selected origin is required.
+diff --git a/apps/desktop/scripts/desktop-policy-environment.mjs b/apps/desktop/scripts/desktop-policy-environment.mjs
+index 5911475..5df4e46 100644
+--- a/apps/desktop/scripts/desktop-policy-environment.mjs
++++ b/apps/desktop/scripts/desktop-policy-environment.mjs
+@@ -10,6 +10,17 @@ function origin(value, name) {
+   return url.origin
+ }
+ 
++/**
++ * Report whether one release target embeds and polls the mandatory-update policy.
++ * The policy service identifies its Desktop clients as desktop-win or desktop-mac and has no Linux
++ * identity, and a Linux release carries no update channel, so no policy decision could drive an action.
++ * @param {NodeJS.Platform} platform Target platform.
++ * @returns {boolean} True when the target embeds the policy.
++ */
++export function desktopPlatformEmbedsPolicy(platform) {
++  return platform !== 'linux'
++}
++
+ /**
+  * Resolve mandatory policy metadata before preparing artifacts or accessing signing hardware.
+  * @param {NodeJS.ProcessEnv} environment File-owned release settings; the unselected origin is not required.
+diff --git a/apps/desktop/tests/desktop-policy-environment.spec.ts b/apps/desktop/tests/desktop-policy-environment.spec.ts
+index e4d893e..5707d7a 100644
+--- a/apps/desktop/tests/desktop-policy-environment.spec.ts
++++ b/apps/desktop/tests/desktop-policy-environment.spec.ts
+@@ -1,5 +1,5 @@
+ import { expect, it } from 'vitest'
+-import { resolveDesktopPolicyEnvironment } from '../scripts/desktop-policy-environment.mjs'
++import { desktopPlatformEmbedsPolicy, resolveDesktopPolicyEnvironment } from '../scripts/desktop-policy-environment.mjs'
+ import { validateDesktopPackageEnvironment } from '../scripts/desktop-package-environment.mjs'
+ import { resolveDesktopPolicyConfig } from '../src/mandatory-update-policy.ts'
+ 
+@@ -53,3 +53,15 @@ it.each([{ unsigned: true }, { prepareOnly: true }, {}])('fails before signing/p
+       .toThrow('DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN')
+   }
+ })
++
++it('embeds the policy on the targets the policy service identifies and none on Linux', () => {
++  expect(['win32', 'darwin'].map(platform => desktopPlatformEmbedsPolicy(platform as NodeJS.Platform))).toEqual([true, true])
++  expect(desktopPlatformEmbedsPolicy('linux')).toBe(false)
++})
++
++it('requires no policy origin on Linux, which embeds no policy', () => {
++  for (const options of [{ unsigned: true }, { prepareOnly: true }]) {
++    expect(() => { validateDesktopPackageEnvironment({ DSH_DESKTOP_APP_ID: 'com.example.test' }, { platform: 'linux', arch: 'x64' }, options) })
++      .not.toThrow()
++  }
++})

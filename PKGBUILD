@@ -2,8 +2,9 @@
 # 从上游 monorepo 源码构建官方 DeepSeek Harness 桌面端（Linux）。
 # 注意：这不是社区套壳版，是从 apps/desktop 构建的官方 Electron 桌面端。
 #
-# !! 阶段 4 之前此文件未经端到端验证 !! 目前只有阶段 1（dev 模式起窗口）通过，
-#    打包路径（package:linux:x64）所需的补丁还没打。已知缺口见 docs/findings.md。
+# !! 此文件尚未端到端验证 !! 已验证的是：patches/ 全部 10 个补丁能干净应用，
+#    package:linux:x64 全程走通并产出可运行的 AppImage（见 docs/findings.md 阶段 3）。
+#    PKGBUILD 本身还没在干净的 makepkg 环境里跑过；deb / rpm 也还没做。
 #
 # 硬性前提：构建必须用 pnpm 11.x。仓库要求 packageManager: pnpm@11.7.0，
 # 而 pnpm-workspace.yaml 用了 pnpm 10+ 的 overrides/allowBuilds/
@@ -53,6 +54,13 @@ build() {
     return 1
   fi
 
+  # 强制更新策略通道是 Windows/macOS 专有的：策略服务只认 desktop-win / desktop-mac 客户端
+  # 身份，Linux 没有对应身份，而且 Linux 产物没有更新通道，策略决定也驱动不了任何动作。
+  # 因此 Linux 版不嵌入策略、也不轮询，上游要求必填的 *_ORIGIN 在这里用不到。
+  cat > apps/desktop/.env.linux <<'EOF'
+DSH_DESKTOP_APP_ID=com.deepseek.harness
+EOF
+
   pnpm install --frozen-lockfile
 
   # Electron 二进制（~117MB）平时由 require('electron') 首次自动下载；
@@ -65,8 +73,8 @@ build() {
 package() {
   cd "$srcdir/$_srcdirname"
 
-  local unpacked="apps/desktop/dist/linux-unpacked"
-  [[ -d "$unpacked" ]] || unpacked="apps/desktop/release/linux-unpacked"
+  # unsigned 构建的输出目录（见 electron-builder-config.mjs 的 directories.output）
+  local unpacked="apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts/linux-unpacked"
   if [[ ! -d "$unpacked" ]]; then
     error "找不到 linux-unpacked，构建产物路径可能变了，见 docs/findings.md"
     return 1

@@ -8,15 +8,21 @@
 #   ./scripts/build.sh --all        # AppImage + deb + rpm
 #
 # 环境变量：
-#   DSH_HOME  隔离的 dsh 数据目录，默认 /tmp/dsh-desktop-test
+#   DSH_DESKTOP_LINUX_HOME  隔离的 dsh 数据目录，默认 /tmp/dsh-desktop-test
+#                           （刻意不读 DSH_HOME，见下方注释）
 #
-# !! 当前状态：链路能推进到 prepare:dsh，但会被 sharp 在 Electron 下的解码段错误挡住，
-#    因此还产不出 linux-unpacked / AppImage。详见 docs/findings.md。
+# 产物落在 .desktop-build/targets/linux-x64/unsigned-artifacts/（unsigned 构建）。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPSTREAM="$ROOT/upstream"
-export DSH_HOME="${DSH_HOME:-/tmp/dsh-desktop-test}"
+# 刻意不继承环境里的 DSH_HOME：DSH 会话自身把 DSH_HOME 指向用户真实的 ~/.dsh，直接继承会让
+# 构建往正在使用的数据目录里写东西。要换路径请用 DSH_DESKTOP_LINUX_HOME。
+export DSH_HOME="${DSH_DESKTOP_LINUX_HOME:-/tmp/dsh-desktop-test}"
+if [[ "$DSH_HOME" == "$HOME/.dsh" ]]; then
+  echo "错误：DSH_HOME 不能指向 $HOME/.dsh（正在使用的 dsh 数据目录）" >&2
+  exit 1
+fi
 
 [[ -d "$UPSTREAM/apps/desktop" ]] || { echo "找不到 $UPSTREAM/apps/desktop，先跑 fetch-upstream.sh" >&2; exit 1; }
 
@@ -45,16 +51,13 @@ case "$MODE" in
 esac
 
 # --- Linux 发布设置文件（上游按平台读 dotenv，Linux 用 .env.linux）---
+# 这里只需要 APP_ID：强制更新策略通道是 Windows/macOS 专有的（策略服务只认 desktop-win /
+# desktop-mac 客户端身份，Linux 没有对应身份），且 Linux 产物没有更新通道，所以 Linux 版
+# 不嵌入策略、也不轮询。上游要求必填的那两个 *_ORIGIN 在这里用不到。详见 docs/findings.md。
 ENV_FILE="$UPSTREAM/apps/desktop/.env.linux"
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "==> $ENV_FILE 不存在，从 .env.linux.example 生成"
   cp "$UPSTREAM/apps/desktop/.env.linux.example" "$ENV_FILE"
-  # policy origin 是必填项（即使是 unsigned 构建），先填占位值让构建能跑。
-  sed -i -e 's|^DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=$|DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=https://example.invalid|' \
-         -e 's|^DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=$|DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=https://example.invalid|' \
-         "$ENV_FILE"
-  echo "==> 注意：policy origin 目前是占位值 https://example.invalid。" >&2
-  echo "    发布前必须替换成真实决策。见 docs/findings.md" >&2
 fi
 
 echo "==> DSH_HOME=$DSH_HOME"

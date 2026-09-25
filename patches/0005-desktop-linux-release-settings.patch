@@ -12,28 +12,25 @@ index 86e330f..f872a4c 100644
  lib/
 diff --git a/apps/desktop/.env.linux.example b/apps/desktop/.env.linux.example
 new file mode 100644
-index 0000000..c2a80f2
+index 0000000..9688e01
 --- /dev/null
 +++ b/apps/desktop/.env.linux.example
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,26 @@
 +# Copy to .env.linux (Git ignored). Use UTF-8 and quote secrets containing # or spaces.
 +# Linux Desktop artifacts are built unsigned, so no signing, notarization, or certificate
 +# setting applies. Credential file paths may be absolute or relative to apps/desktop.
 +# Values are not shell-expanded.
 +DSH_DESKTOP_APP_ID=com.deepseek.harness
-+DSH_DESKTOP_AUTO_UPDATE_ENV=test
++
++# The mandatory-update policy channel is Windows and macOS only. The policy service identifies its
++# Desktop clients as desktop-win or desktop-mac and has no Linux identity, and a Linux release carries
++# no update channel, so no policy decision could drive an action. A Linux application therefore embeds
++# no policy and polls nothing: DSH_DESKTOP_AUTO_UPDATE_ENV, both
++# DSH_DESKTOP_MANDATORY_UPDATE_*_ORIGIN settings, and DSH_DESKTOP_MANDATORY_UPDATE_CONFIG do not apply.
 +
 +# Optional npm registry for the bundled dsh runtime install; defaults to https://registry.npmjs.org/.
 +# A local mirror such as https://registry.npmmirror.com speeds up repeated local packages.
 +# DSH_DESKTOP_NPM_REGISTRY=https://registry.npmmirror.com
-+
-+# The selected mandatory-update origin is required, including unsigned and preparation builds.
-+DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=
-+DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=
-+# Set approved login origins for test builds; omit allowedAuthOrigins for production.
-+# Optional polling and fallback-page options belong in the same JSON value.
-+# The fallback-page allowlist defaults to the selected service origin.
-+DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"allowedAuthOrigins":["https://login.example.com"]}'
 +
 +# Optional upload configuration; packaging does not require these credentials.
 +# DOWNLOAD_TEST_ORIGIN=
@@ -67,9 +64,18 @@ index b0d7bc2..c158004 100644
    options?: { unsigned?: boolean, prepareOnly?: boolean },
  ): void
 diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
-index 3addf3f..a515bba 100644
+index 3addf3f..e978f04 100644
 --- a/apps/desktop/scripts/desktop-package-environment.mjs
 +++ b/apps/desktop/scripts/desktop-package-environment.mjs
+@@ -7,7 +7,7 @@ import { parseEnv } from 'node:util'
+ import { resolveDesktopAppId, resolveMacOSNotarizationEnvironment, resolveMacOSSigningEnvironment, resolveNpmRegistry } from './desktop-release-environment.mjs'
+ import { resolveDesktopAutoUpdateConfig } from './desktop-auto-update-environment.mjs'
+ import { createWindowsTokenSigner } from './windows-sign.mjs'
+-import { resolveDesktopPolicyEnvironment } from './desktop-policy-environment.mjs'
++import { desktopPlatformEmbedsPolicy, resolveDesktopPolicyEnvironment } from './desktop-policy-environment.mjs'
+ import { resolveMacOSPackageSettings } from './macos-package-settings.mjs'
+ import { resolveWindowsSignatureCacheDirectory } from './windows-signature-cache-directory.mjs'
+ import { resolveWindowsPackageSettings } from './windows-package-settings.mjs'
 @@ -21,13 +21,13 @@ const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGN
  
  /**
@@ -99,7 +105,7 @@ index 3addf3f..a515bba 100644
        throw new Error(`desktop package: unsupported setting ${name} in ${path}; use the platform template`)
      }
      if (settings[name].includes('\0')) throw new Error(`desktop package: ${name} cannot contain a NUL character`)
-@@ -72,7 +73,7 @@ function requireReadableFile(environment, name) {
+@@ -72,16 +73,16 @@ function requireReadableFile(environment, name) {
  /**
   * Validate release configuration before preparation without invoking a token or Apple's services.
   * @param {NodeJS.ProcessEnv} environment File-owned release settings.
@@ -108,15 +114,26 @@ index 3addf3f..a515bba 100644
   * @param {{ unsigned?: boolean, prepareOnly?: boolean }} options Explicit packaging mode.
   * @returns {void}
   */
-@@ -81,7 +82,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+ export function validateDesktopPackageEnvironment(environment, target, options = {}) {
+   resolveDesktopAppId(environment)
    resolveNpmRegistry(environment)
-   resolveDesktopPolicyEnvironment(environment)
+-  resolveDesktopPolicyEnvironment(environment)
++  if (desktopPlatformEmbedsPolicy(target.platform)) resolveDesktopPolicyEnvironment(environment)
    if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
 -  else resolveWindowsPackageSettings(environment)
 +  else if (target.platform === 'win32') resolveWindowsPackageSettings(environment)
    if (options.unsigned) return
    if (!options.prepareOnly) resolveDesktopAutoUpdateConfig(environment, target.platform, target.arch)
    if (target.platform === 'win32') {
+@@ -92,7 +93,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+       keyContainer: environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER,
+     })
+     if (!options.prepareOnly) resolveWindowsSignatureCacheDirectory(environment)
+-  } else {
++  } else if (target.platform === 'darwin') {
+     resolveMacOSSigningEnvironment(environment)
+     const strategies = [
+       ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'],
 diff --git a/apps/desktop/scripts/desktop-toolchain-preflight.ts b/apps/desktop/scripts/desktop-toolchain-preflight.ts
 index ff855cf..08c8dc1 100644
 --- a/apps/desktop/scripts/desktop-toolchain-preflight.ts

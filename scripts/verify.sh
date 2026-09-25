@@ -4,27 +4,42 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPSTREAM="$ROOT/upstream"
-export DSH_HOME="${DSH_HOME:-/tmp/dsh-desktop-test}"
+# 刻意不继承环境里的 DSH_HOME：DSH 会话自身把 DSH_HOME 指向用户真实的 ~/.dsh，直接继承会让
+# 构建往正在使用的数据目录里写东西。要换路径请用 DSH_DESKTOP_LINUX_HOME。
+export DSH_HOME="${DSH_DESKTOP_LINUX_HOME:-/tmp/dsh-desktop-test}"
+if [[ "$DSH_HOME" == "$HOME/.dsh" ]]; then
+  echo "错误：DSH_HOME 不能指向 $HOME/.dsh（正在使用的 dsh 数据目录）" >&2
+  exit 1
+fi
 
 pass=0; fail=0
 ok()   { echo "  [PASS] $1"; pass=$((pass+1)); }
 bad()  { echo "  [FAIL] $1"; fail=$((fail+1)); }
 skip() { echo "  [SKIP] $1"; }
 
+# unsigned 构建的输出目录（见 electron-builder-config.mjs 的 directories.output）
+OUT="$UPSTREAM/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts"
+
 echo "== 1. 产物存在 =="
-mapfile -t artifacts < <(find "$UPSTREAM/apps/desktop" -maxdepth 3 \
+mapfile -t artifacts < <(find "$OUT" -maxdepth 1 \
   \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) 2>/dev/null)
 if (( ${#artifacts[@]} > 0 )); then
   for a in "${artifacts[@]}"; do ok "$(basename "$a") ($(du -h "$a" | cut -f1))"; done
 else
-  bad "没找到 AppImage/deb/rpm 产物"
+  bad "没找到 AppImage/deb/rpm 产物（$OUT）"
 fi
 
 echo "== 2. 未打包目录可执行 =="
-if [[ -x "$UPSTREAM/apps/desktop/dist/linux-unpacked/deepseek-harness" ]]; then
-  ok "dist/linux-unpacked/deepseek-harness"
+if [[ -x "$OUT/linux-unpacked/deepseek-harness" ]]; then
+  ok "linux-unpacked/deepseek-harness"
+  # 真 Node 读不了 asar，Linux 上 dsh 必须是一棵真目录树。
+  if [[ -d "$OUT/linux-unpacked/resources/app/dsh/node_modules" ]]; then
+    ok "resources/app/dsh 是解包目录树（asar 已关闭）"
+  else
+    bad "resources/app/dsh 不是解包目录树——真 Node 读不了 asar"
+  fi
 else
-  skip "dist/linux-unpacked 不存在（还没跑 package:dir）"
+  skip "linux-unpacked 不存在（还没跑 package:linux:x64:dir）"
 fi
 
 echo "== 3. 原生模块 =="

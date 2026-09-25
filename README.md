@@ -24,6 +24,7 @@ dsh-desktop-linux/
 │   ├── fetch-upstream.sh     # clone + checkout 指定 tag
 │   ├── apply-patches.sh
 │   ├── build.sh
+│   ├── dev-desktop.sh
 │   └── verify.sh
 ├── PKGBUILD
 └── .github/workflows/build.yml
@@ -61,30 +62,43 @@ dev 模式（阶段 1，已验证可起窗口）：
 |---|---|---|
 | 0 | 建仓 + 隔离 | 完成 |
 | 1 | dev 模式验证（窗口能否弹出） | **完成：窗口正常弹出**，详见 `docs/findings.md` |
-| 2 | 定位打包失败点，打补丁 | **7 个补丁已打，链路推进 5 个阶段**；卡在 sharp 段错误（见下） |
-| 3 | 原生模块（node-pty / sharp） | node-pty 与 sharp 的 linux 二进制都已就位，但 **sharp 在 Electron 下的解码会段错误**——升格为本项目当前唯一硬阻塞 |
-| 4 | 产物：AppImage → deb → rpm → PKGBUILD | 未开始（被阶段 3 阻塞） |
+| 2 | 定位打包失败点，打补丁 | **完成：链路推进到 `prepare:dsh`**，卡在 sharp 段错误 |
+| 3 | 原生模块（node-pty / sharp） | **完成：Linux 上 Host 改走 primary-runtime 的真 Node**，sharp 解码正常 |
+| 4 | 产物：AppImage → deb → rpm → PKGBUILD | **进行中**：`linux-unpacked` 已产出并实测能起窗口；AppImage 构建中，deb / rpm / PKGBUILD 未验证 |
 | 5 | 验证矩阵（协议、profile 隔离、端口） | 部分提前验证：`dsh-app://` 正常、`profiles/desktop` 隔离、19387 端口一致 |
 | 6 | 回到上游 Discussion 汇报 | 未开始 |
 
-## 当前阻塞
+## 当前状态
 
-`sharp` 的 PNG **解码**在 Electron 的 **node 模式**（`ELECTRON_RUN_AS_NODE=1`）下段错误。
-编码正常；同样的代码在系统 Node、以及 Electron **GUI 模式**下都正常。
-根因是 sharp 官方记录过的 Electron/Linux 冲突：Electron 动态链接系统 glib 并把符号泄漏进
-进程空间（upstream: electron#46323）。
+打包流水线已经全程走通，产物能起来：
 
-**这不是测试假阳性**：dsh 运行时正是跑在 node 模式里
-（`apps/desktop-host/src/index.ts:36` 设 `ELECTRON_RUN_AS_NODE=1`，上游 README 也这么写），
-所以 Linux 上图像附件路径会把 Host 打崩。这挡住了 `prepare:dsh` 的运行时冒烟，
-因此还产不出 `linux-unpacked`。
+```
+configuration ✓ → toolchain ✓ → build:official ✓ → release:pack ✓
+→ prepare:runtime ✓ → prepare:packages ✓ → prepare:dsh ✓ → package ✓ → smoke:packaged ✓
+```
 
-好消息：primary-runtime 里**本来就带一个真 Node**（`dependencies/node/bin/node`，24.21.0，
-`electron=none`），sharp 在它下面实测正常。候选解法与取舍见 `docs/findings.md`，需要决策。
+`prepare:dsh` 的运行时冒烟里 `"sharp":true`——就是最初段错误的那一步。打包后的应用实测
+能起窗口（标题 `DeepSeek Harness`，欢迎页正常），Host 进程的 executable 是
+`resources/runtime/primary-runtime/dependencies/node/bin/node`。
+
+关键结论：**Linux 上 Host 跑在 primary-runtime 自带的真 Node 上**，不再用 Electron 的 node 模式。
+连带地，Linux 产物的 dsh 目录树不放进 asar（真 Node 读不了归档）。
+细节与取舍见 `docs/findings.md` 的阶段 3 一节。
+
+## 未决事项
+
+- **deb / rpm / PKGBUILD 还没验证**，目前只有 AppImage。
+- **强制更新策略通道 Linux 不参与**：策略服务只认 `desktop-win` / `desktop-mac` 客户端身份，
+  Linux 没有对应身份，而且 Linux 产物没有更新通道。所以 Linux 版不嵌入策略、不轮询，
+  也不需要任何 `DSH_MANDATORY_UPDATE_*` 设置。若将来上游补上 Linux 身份，放开
+  `desktopPlatformEmbedsPolicy()` 即可。
 
 ## 纪律
 
 1. **`DSH_HOME` 必须指向临时目录。** 本机 3080 上跑着 GUI，`~/.dsh` 有 1.7G；
    桌面端要用 `profiles/desktop`，绝不能碰正在用的 `web` profile。
+   注意：**DSH 会话自己会把 `DSH_HOME` 设成真实的 `~/.dsh`**，所以 `scripts/*.sh` 刻意
+   不读 `DSH_HOME`，只读 `DSH_DESKTOP_LINUX_HOME`（默认 `/tmp/dsh-desktop-test`），
+   并在 `DSH_HOME == $HOME/.dsh` 时直接退出。
 2. **磁盘**：`/home` 余量有限，构建吃 monorepo clone + pnpm store + Electron 二进制 + 产物。
 3. **上游 Issues 与 PRs 都关闭**，只能 fork 或走 Discussion。
