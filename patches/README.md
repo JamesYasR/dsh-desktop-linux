@@ -10,4 +10,6 @@
 2. `electron-builder-config.mjs` 里 `unsigned && resolvedPlatform !== 'win32'` 那条限制
 3. `apps/desktop/package.json` 加 `package:linux:x64` 脚本
 
-目前为空——阶段 1（dev 模式）不走 `package-target.ts`，理论上不需要补丁。
+目前已有 `0001`。**注意：阶段 1（dev 模式）也需要它**——`dev.ts` 虽然不走
+`package-target.ts`，但会调用 `resolveDesktopBuildTarget()`，Linux 上抛
+`unsupported target linux-x64`。详见 `docs/findings.md`。
