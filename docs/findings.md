@@ -748,9 +748,10 @@ linux-unpacked 的**（`FpmTarget` 里 `copyFile(scripts.appArmor, resourceDir/a
 （libuuid 在 Arch 属于 `util-linux`，在 base 里，不列）。验证方法：`ldd` 主二进制拿到 93 个
 soname，对已声明 `depends` 的传递闭包（177 个官方仓库包）求覆盖——**全覆盖**。
 
-`namcap`：**0 error**，只剩两类 warning——「dependency X detected and implicitly satisfied」
-（传递依赖，正常），以及「`libnotify` / `libxss` / `libxtst` / `xdg-utils` / `libsecret`
+`namcap PKGBUILD`：**0 error**，只剩两类 warning——「dependency X detected and implicitly
+satisfied」（传递依赖，正常），以及「`libnotify` / `libxss` / `libxtst` / `xdg-utils` / `libsecret`
 可能不需要」。这五个正是上游自己声明的运行时依赖，通过 dlopen / exec 使用，namcap 看不到。
+（这里说的只是 PKGBUILD 层级；包层级是另一套规则，见本节末「namcap 的两个层级」。）
 
 **pnpm 版本不用管。** 仓库声明 `packageManager: pnpm@11.7.0`，Arch 的 `pnpm`（11.26）会自己
 切过去——实测在仓库里 `pnpm --version` 输出 `11.7.0`。所以 `makedepends=('pnpm')` 就够，
@@ -791,7 +792,8 @@ sources+sha256 ✓ → prepare() 12 个补丁 ✓ → pnpm install ✓ → build
 |---|---|
 | `deepseek-harness-desktop-0.1.7rc2-1-x86_64.pkg.tar.zst` | 351M（安装后 1071MiB，24902 个文件） |
 
-`namcap`：0 error。`pacman -U` 装上后实测：`/usr/bin/deepseek-harness` →
+`namcap PKGBUILD`：0 error（包级别是另一套规则，见本节末「namcap 的两个层级」）。`pacman -U`
+装上后实测：`/usr/bin/deepseek-harness` →
 `/opt/deepseek-harness-desktop/deepseek-harness`，窗口正常起（Welcome 页），19387 端口监听，
 Host 进程是 `resources/runtime/primary-runtime/dependencies/node/bin/node`（即 primary-runtime
 自带的真 Node，和阶段 3 的结论一致），渲染进程在独立 user namespace（`4026533617`）且 seccomp
@@ -809,6 +811,30 @@ SUID。`post_upgrade` 也实测过：先把 `chrome-sandbox` 改成 4755，重�
 （`Device unallocated: 1 MiB`，`df` 报的 17G 是 chunk 内的剩余，btrfs 分配不出新 metadata chunk），
 报 `ENOSPC`。这是磁盘限制不是 PKGBUILD 问题——剩下的 `electron-builder --dir` 和 `package()`
 在宿主上跑通了（`package()` 里那个 apparmor 坑就是第一次宿主跑出来的）。
+
+### namcap 的两个层级（一个我写错过的结论）
+
+`namcap PKGBUILD` 和 `namcap <包文件>` 是两套不同的规则集，结论完全相反。README 里原先写的
+「`namcap` 0 error」只对前者成立；包级别实测是 **25 条 error tag + 4758 条 warning tag**。
+原话没写清层级，等于说错了，这里更正。
+
+| namcap 包级别报告 | 条数 | 为什么不是 PKGBUILD 的缺陷 |
+|---|---|---|
+| `Referenced python module … is an uninstalled dependency` | 4445 W | 包里带着完整的 python 运行时，namcap 把 site-packages 里 import 的每个模块都当成缺系统依赖 |
+| `ELF file … lacks FULL RELRO` / `is unstripped` / `lacks PIE` | 111 / 52 / 13 W | 上游预编译的 `.node` / `.so`；`options=('!strip')` 也是刻意的 |
+| `Unused shared library …` | 101 W | 同上 |
+| `Dependency … detected and not included`（python-* / pyside6 / nodejs / libxcrypt-compat） | 19 E | 同第一行 |
+| `Insecure RPATH/RUNPATH` | 6 E | 上游预编译二进制；有一条 RUNPATH 直接写着 `…/work/sherpa-onnx/…/build/install/lib`——GitHub runner 的构建目录漏进了二进制 |
+| `ELF files outside of a valid path ('opt/')` | 1 E | namcap 自己把 `opt/` 列进 `questionable_dirs`（`Namcap/rules/elffiles.py`），而 Arch 允许自包含应用装 `/opt` |
+
+所以 CI 里 `namcap PKGBUILD` 当门禁（必须 0 error），`namcap <包文件>` 只报告。
+
+**顺带一个 namcap 假阳性**：`namcap PKGBUILD` 一开始报 `File referenced in $startdir`，来源是
+PKGBUILD 头部注释里那个变量名的**字面量**——`invalidstartdir` 规则
+（`Namcap/rules/invalidstartdir.py`）扫的是整份文件包括注释，看到 `$` 加 `startdir` 就当成真的
+引用。实测确认：把注释里的字面量换成「PKGBUILD 所在目录」，这条 E 立刻消失（0 E / 2 W）。
+PKGBUILD 里现在留了一行注释说明，免得以后有人「顺手」把变量名写回去。剩下那 2 条 warning 是
+`uses internal makepkg 'msg2' / 'error' subroutine`，属于风格提示，没改。
 
 ## 补丁清单
 

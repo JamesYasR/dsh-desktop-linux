@@ -97,6 +97,13 @@ dev 模式（阶段 1，已验证可起窗口）：
   普遍这么用。
 - **格式选择不在这里**，而是 `DSH_DESKTOP_TARGET_FORMATS`（一次构建的选择器，与
   `DSH_DESKTOP_TARGET_PLATFORM` / `_ARCH` 同类，只能从环境传，写进 `.env.linux` 会被拒收）。
+- **反过来，表格里那三个设置不能从环境传。** 上游把 `DSH_DESKTOP_APP_ID` 与
+  `DSH_DESKTOP_LINUX_*` 全列进了 `AMBIENT_RELEASE_SETTING`
+  （`apps/desktop/scripts/desktop-package-environment.mjs`），载入 `.env.linux` 时会先把进程
+  环境里这些名字整个滤掉、再合并文件——所以
+  `DSH_DESKTOP_LINUX_MAINTAINER=… ./scripts/build.sh --deb` 是**静默无效**的，只认文件。
+  CI 里要换 maintainer 只能改 `.env.linux`（或它对应的 `.env.linux.example`），设 GitHub
+  变量或 secret 没有用。
 - 两者都在打包最前面的 `configuration` 阶段校验，不会等到 fpm 跑到一半才报错。
 
 ### 硬性前提
@@ -162,9 +169,14 @@ Arch 包（`./scripts/aur-dir.sh` + `makepkg`）：
 |---|---|
 | `deepseek-harness-desktop-0.1.7rc2-1-x86_64.pkg.tar.zst` | 351M（安装后 1071MiB） |
 
-`namcap` 0 error；`pacman -U` 装上后窗口正常起、19387 端口监听、渲染进程有沙箱、`pacman -R`
-卸载无残留。依赖表是算出来的（ldd 的 93 个 soname 全部被已声明 `depends` 的传递闭包覆盖），
-不是照抄 Debian 的包名。
+`namcap PKGBUILD` 0 error（另有 2 条 warning：用了 makepkg 的 `msg2` / `error` 内部子程序）；
+`pacman -U` 装上后窗口正常起、19387 端口监听、渲染进程有沙箱、`pacman -R` 卸载无残留。依赖表
+是算出来的（ldd 的 93 个 soname 全部被已声明 `depends` 的传递闭包覆盖），不是照抄 Debian 的包名。
+
+注意 **`namcap <包文件>` 走的是另一套规则**：它对这个包报 25 条 error tag + 4758 条 warning
+tag，但**没有一条是 PKGBUILD 的缺陷**（`opt/` 在 namcap 眼里只是 questionable、包里自带完整的
+python / node / pnpm 运行时、预编译二进制的 RPATH）。逐条对照见 `docs/findings.md`。CI 里前者
+当门禁，后者只报告。
 
 ## 未决事项
 

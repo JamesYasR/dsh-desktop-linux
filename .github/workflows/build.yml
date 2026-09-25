@@ -121,3 +121,83 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
+
+  # Arch 包（AUR 交付物）单独一个 job：跑在 archlinux 容器里，与上面的 electron-builder
+  # 流水线无关。PKGBUILD 直接吃上游 release 源码包，不依赖 ./upstream 检出。
+  arch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container:
+      image: archlinux:latest
+      options: --user root
+    steps:
+      # 必须在 checkout 之前：镜像里没有 git，而 actions/checkout 要调它。
+      # 一次 -Syu 再装是 Arch 的正确姿势（避免部分升级）。git 依赖 shadow，
+      # 所以 useradd 跟着就有；sudo / fakeroot 由 base-devel 带进来。
+      - name: 装工具链
+        run: pacman -Syu --noconfirm --needed base-devel git nodejs pnpm python namcap
+
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # makepkg 拒绝以 root 运行。runuser 不依赖 setuid，比 sudo 更适合容器。
+      - name: 建构建用户
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      # makepkg --nodeps 会跳过依赖检查（否则为了打个包得把整棵 gtk3 装进容器），
+      # 但那样包名拼错就没人发现了。pacman -Si 只查元数据，不下载不安装。
+      - name: 校验 depends 的包名都存在
+        run: |
+          rc=0
+          while read -r name; do
+            if pacman -Si "$name" >/dev/null 2>&1; then
+              echo "  OK   $name"
+            else
+              echo "  MISS $name（depends 里的包名在仓库里不存在）" >&2
+              rc=1
+            fi
+          done < <(bash -c 'source ./PKGBUILD; printf "%s\n" "${depends[@]}"')
+          exit "$rc"
+
+      - name: namcap PKGBUILD
+        run: |
+          out="$(namcap PKGBUILD 2>&1 || true)"
+          printf '%s\n' "$out"
+          if grep -q ' E: ' <<<"$out"; then
+            echo "namcap 在 PKGBUILD 上报了 error" >&2
+            exit 1
+          fi
+
+      - name: 摊平成 AUR 目录
+        run: runuser -u builder -- ./scripts/aur-dir.sh
+
+      - name: makepkg
+        working-directory: aur
+        run: runuser -u builder -- makepkg -C --nodeps --nocheck
+
+      # 包级别 namcap 对「自带完整运行时、装进 /opt」的应用必然报 error，没有一条是 PKGBUILD
+      # 的缺陷，所以只报告不当门禁：
+      #   - "ELF files outside of a valid path ('opt/')"：namcap 自己把 opt/ 归到
+      #     questionable_dirs（Namcap/rules/elffiles.py），而 Arch 允许自包含应用装 /opt。
+      #   - "Insecure RPATH/RUNPATH"：来自上游预编译的 sherpa-onnx / primary-runtime 二进制。
+      #   - "Dependency ... detected and not included"：包里带着完整的 python/node/pnpm
+      #     运行时，namcap 的依赖探测是按「用系统库」的前提写的。
+      # 只打印 error tag 和计数：warning 有四千多条（全是上游预编译二进制的 FULL RELRO）。
+      - name: namcap 包（仅报告）
+        run: |
+          namcap aur/*.pkg.tar.zst > /tmp/namcap-package.txt 2>&1 || true
+          echo "namcap 包级别：$(grep -c ' E: ' /tmp/namcap-package.txt || true) 条 error tag，$(grep -c ' W: ' /tmp/namcap-package.txt || true) 条 warning tag"
+          grep ' E: ' /tmp/namcap-package.txt | cut -c1-160 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-harness-desktop-arch
+          path: |
+            aur/*.pkg.tar.zst
+            aur/.SRCINFO
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
