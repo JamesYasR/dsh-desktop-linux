@@ -2,11 +2,19 @@
 # 从上游 monorepo 源码构建官方 DeepSeek Harness 桌面端（Linux）。
 # 注意：这不是社区套壳版，是从 apps/desktop 构建的官方 Electron 桌面端。
 #
-# 构建前请阅读 docs/findings.md 里的已知阻塞点（node-pty / sharp / package-target）。
+# !! 阶段 4 之前此文件未经端到端验证 !! 目前只有阶段 1（dev 模式起窗口）通过，
+#    打包路径（package:linux:x64）所需的补丁还没打。已知缺口见 docs/findings.md。
+#
+# 硬性前提：构建必须用 pnpm 11.x。仓库要求 packageManager: pnpm@11.7.0，
+# 而 pnpm-workspace.yaml 用了 pnpm 10+ 的 overrides/allowBuilds/
+# minimumReleaseAgeExclude —— pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
 
 pkgname=deepseek-harness-desktop
 pkgver=0.1.7rc2
 pkgrel=1
+_tag="v0.1.7-rc.2"
+_srcdirname="deepseek-harness-0.1.7-rc.2"
+
 pkgdesc="Official DeepSeek Harness desktop app for Linux (built from upstream monorepo)"
 arch=('x86_64')
 url="https://github.com/ffyfox/dsh-desktop-linux"
@@ -16,12 +24,11 @@ makedepends=('nodejs' 'npm' 'pnpm' 'python' 'git' 'base-devel')
 provides=('deepseek-harness-desktop')
 conflicts=('deepseek-harness-desktop-git' 'dsh-desktop-git')
 options=('!strip' '!emptydirs')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harness/archive/refs/tags/v${pkgver/rc/.rc}.tar.gz")
-noextract=()
+source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harness/archive/refs/tags/${_tag}.tar.gz")
 sha256sums=('SKIP')
 
 prepare() {
-  cd "$srcdir/deepseek-harness-${pkgver/rc/.rc}"
+  cd "$srcdir/$_srcdirname"
 
   # 本项目维护的补丁（阶段 2 产出）。补丁目录可能为空。
   local patchdir="$startdir/patches"
@@ -35,16 +42,28 @@ prepare() {
 }
 
 build() {
-  cd "$srcdir/deepseek-harness-${pkgver/rc/.rc}"
+  cd "$srcdir/$_srcdirname"
   export DSH_HOME="$srcdir/dsh-home"
   export ELECTRON_CACHE="$srcdir/electron-cache"
 
+  local pnpm_major
+  pnpm_major="$(pnpm --version | cut -d. -f1)"
+  if (( pnpm_major < 11 )); then
+    error "需要 pnpm 11.x，当前是 $(pnpm --version)。见 docs/findings.md"
+    return 1
+  fi
+
   pnpm install --frozen-lockfile
+
+  # Electron 二进制（~117MB）平时由 require('electron') 首次自动下载；
+  # 打包前显式预热，保证离线/可复现。
+  node apps/desktop/node_modules/electron/install.js
+
   pnpm --dir apps/desktop run package:linux:x64
 }
 
 package() {
-  cd "$srcdir/deepseek-harness-${pkgver/rc/.rc}"
+  cd "$srcdir/$_srcdirname"
 
   local unpacked="apps/desktop/dist/linux-unpacked"
   [[ -d "$unpacked" ]] || unpacked="apps/desktop/release/linux-unpacked"

@@ -38,16 +38,33 @@ dsh-desktop-linux/
 ./scripts/verify.sh
 ```
 
+dev 模式（阶段 1，已验证可起窗口）：
+
+```bash
+./scripts/dev-desktop.sh                 # 构建 + 起窗口
+./scripts/dev-desktop.sh --no-devtools   # 不自动弹 DevTools
+```
+
+### 硬性前提
+
+- **必须用 pnpm 11.x**（仓库要求 `packageManager: pnpm@11.7.0`）。系统 pnpm 9 会在
+  `pnpm install` 报 `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`——`pnpm-workspace.yaml` 用了
+  pnpm 10+ 的 `overrides` / `allowBuilds` / `minimumReleaseAgeExclude`。
+- **`dev:desktop` 前必须先跑一次 `pnpm run build`**。`dev.ts` 的 import 是静态提升的，
+  会在它自己那次构建之前解析 `lib/`，干净树上直接跑会 `ERR_MODULE_NOT_FOUND`。
+- **dev 模式也需要 `patches/0001`**。`dev.ts` 虽然不碰 `package-target.ts`，但它调用
+  `resolveDesktopBuildTarget()`，Linux 会抛 `unsupported target linux-x64`。
+
 ## 阶段进度
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 0 | 建仓 + 隔离 | 完成 |
-| 1 | dev 模式验证（窗口能否弹出） | 见 `docs/findings.md` |
+| 1 | dev 模式验证（窗口能否弹出） | **完成：窗口正常弹出**，详见 `docs/findings.md` |
 | 2 | 定位打包失败点，打补丁 | 未开始 |
-| 3 | 原生模块（node-pty / sharp） | 未开始 |
+| 3 | 原生模块（node-pty / sharp） | 风险下调：两个模块的 linux 二进制在当前版本都已就位 |
 | 4 | 产物：AppImage → deb → rpm → PKGBUILD | 未开始 |
-| 5 | 验证矩阵（协议、profile 隔离、端口） | 未开始 |
+| 5 | 验证矩阵（协议、profile 隔离、端口） | 部分提前验证：`dsh-app://` 正常、`profiles/desktop` 隔离、19387 端口一致 |
 | 6 | 回到上游 Discussion 汇报 | 未开始 |
 
 ## 纪律
