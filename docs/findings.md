@@ -452,12 +452,12 @@ electron-builder 会警告 `desktopName is not set in package.json`。Electron �
   `authorEmailIsMissed` / `Please specify project homepage`）；rpm 还额外需要系统装
   `rpmbuild`（本机没有，Arch 上是 `rpm-tools`）。maintainer 是要写进 Debian control 的
   真实身份，属于需要产品输入的信息，所以当时没有先塞占位值。
-- **AppImage 以 `--no-sandbox` 运行**。这是 electron-builder 对 AppImage 的默认行为
-  （squashfs 挂载里的 `chrome-sandbox` 没法是 setuid root），生成的 .desktop 里
+- ~~**AppImage 以 `--no-sandbox` 运行**~~ → **阶段 4 已解决**。这是 electron-builder 对 AppImage
+  的默认行为（squashfs 挂载里的 `chrome-sandbox` 没法是 setuid root），生成的 .desktop 里
   `Exec=AppRun --no-sandbox %U`。也就是说 AppImage 版本没有 Chromium 沙箱——
-  这正是 deb / rpm 有价值的地方（阶段 4 确认了它们的 `postinst` / `%post` 会按宿主机是否支持
-  user namespace 决定 `chrome-sandbox` 是否 setuid，两种情况都有沙箱可用）。
-  发 AppImage 前需要决定：接受无沙箱，还是改用 unprivileged user namespace 沙箱。
+  当时以为 deb / rpm 才有沙箱（阶段 4 确认了它们的 `postinst` / `%post` 会按宿主机是否支持
+  user namespace 决定 `chrome-sandbox` 是否 setuid）。实际上 AppImage 也能有：
+  去掉那个写死的 flag、交给 AppRun 的探测即可，见下面阶段 4 一节。
 - **PKGBUILD 未在干净的 makepkg 环境里验证**。
 - `desktopUpdateMetadataFilename` 仍拒绝 `linux`。Linux 走 unsigned 不经过它；
   将来要 Linux 更新通道才需要动。
@@ -608,6 +608,74 @@ fi
 namespace 沙箱（不打 setuid），不支持才退回 setuid `chrome-sandbox`。rpm 的 `%post` 是同一份脚本。
 `postinst` 还会用 update-alternatives 注册 `/usr/bin/deepseek-harness`，并在检测到 AppArmor
 支持时装一份随包分发的 profile（`resources/apparmor-profile` 确实在包里）。
+
+### AppImage 的 `--no-sandbox`：不用接受，一行配置就能拿回沙箱
+
+第一版 AppImage 里解出来的 `.desktop` 是：
+
+```
+Exec=AppRun --no-sandbox %U
+```
+
+也就是**从桌面菜单启动的每一次都没有 Chromium 沙箱**。当时我把它记成「发 AppImage 前需要决定接不接受」，
+但把来源和实测都做了一遍之后，这个说法站不住。
+
+**这个 flag 是 electron-builder legacy 工具集的缺省值**（`AppImageTarget.js:26`）：
+
+```js
+const appimageTool = packager.config.toolsets?.appimage
+const defaultArgs = appimageTool == null || appimageTool === "0.0.0" ? ["--no-sandbox"] : []
+```
+
+只有 `0.0.0`（当前缺省）加；`1.0.2` / `1.0.3` 那两个静态 runtime 工具集不加（文档里都标着 Beta）。
+
+**而 AppRun 自己已经有正确的判断**：
+
+```bash
+if [ $HAVE_NO_SANDBOX -eq 0 ] && ! unshare -Ur true 2>/dev/null ; then
+  NO_SANDBOX=(--no-sandbox)
+fi
+```
+
+探测到 user namespace 不可用才自己补。所以 AppRun 是好的，**写死 flag 的 `.desktop` 才是问题**。
+
+实测（只取该 AppImage 自己的渲染进程，看 user namespace inode 与 seccomp 状态）：
+
+| 启动方式 | 渲染进程 user-ns | seccomp |
+|---|---|---|
+| 不带 flag | `4026532736`（独立 namespace） | 2（过滤器生效） |
+| 带 `--no-sandbox` | `4026531837`（与主进程同一个） | 0（无） |
+
+所以「AppImage 没法沙箱」不成立：squashfs 挂载是 `nosuid` 只说明 **setuid helper** 用不了，
+而 Chromium 还有 **unprivileged user namespace** 这条路。
+
+**解法**：给 AppImage 目标显式一个空参数表。
+
+```js
+appImage: { executableArgs: [] },
+```
+
+`[]` 不是 nullish，`this.options.executableArgs ?? defaultArgs` 不会回落到 `defaultArgs`，
+`Exec` 就变成 `AppRun %U`，决定权回到 AppRun 的探测。
+
+必须写在 `appImage:` 这一层而不是 `linux.executableArgs`：target 的 options 是按名字合的
+（`AppImageTarget` 用 `config.appImage`，`FpmTarget` 用 `config.deb` / `config.rpm`），
+而 `[]` 在 JS 里是 truthy，`linux.executableArgs: []` 会让 deb/rpm 的 `Exec` 走进
+`if (executableArgs)` 分支、多出一个空格（`"…" %U` 变 `"…"  %U`）。写在 `appImage` 层就只影响 AppImage。
+
+实测三个产物的 `Exec`：
+
+```
+AppImage: Exec=AppRun %U
+deb:      Exec="/opt/DeepSeek Harness/deepseek-harness" %U
+rpm:      Exec="/opt/DeepSeek Harness/deepseek-harness" %U
+```
+
+重打后的 AppImage 按新的 `.desktop` 方式启动，渲染进程仍在独立 user namespace 且 seccomp 生效。
+
+副作用（正面）：修之前菜单启动无沙箱、终端直接跑有沙箱，同一个产物两种行为；现在一致了。
+仍然无沙箱的场景只剩「宿主机不支持 user namespace」——那时 AppRun 会自己补 flag，
+这是环境所限，不是我们主动关掉的。
 
 ### 结果
 

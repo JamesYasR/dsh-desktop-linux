@@ -127,9 +127,10 @@ configuration ✓ → toolchain ✓ → build:official ✓ → release:pack ✓
 | `deepseek-harness-0.1.7-rc.2-linux-x86_64-unsigned.rpm` | 233M |
 
 包元数据已核对：deb 的 `Maintainer` / `Homepage` / `Section: devel` / `Description` 首行非空，
-rpm 的 `Name` / `Group` / `Summary` / `URL` / `Packager` 齐全。deb 的 `postinst` 会按宿主机是否
-支持 user namespace 决定 `chrome-sandbox` 是否 setuid——**deb 与 rpm 都有沙箱**，
-这点和 AppImage 不同。详见 `docs/findings.md` 的阶段 4 一节。
+rpm 的 `Name` / `Group` / `Summary` / `URL` / `Packager` 齐全。三种产物**都有 Chromium 沙箱**：
+AppImage 交给 AppRun 的 user-namespace 探测，deb / rpm 交给 `postinst` / `%post` 里的同一套判断
+（内核支持 unprivileged user namespace 就用 namespace 沙箱，不支持才退回 setuid `chrome-sandbox`）。
+详见 `docs/findings.md` 的阶段 4 一节。
 
 ## 未决事项
 
@@ -138,9 +139,12 @@ rpm 的 `Name` / `Group` / `Summary` / `URL` / `Packager` 齐全。deb 的 `post
   Linux 没有对应身份，而且 Linux 产物没有更新通道。所以 Linux 版不嵌入策略、不轮询，
   也不需要任何 `DSH_MANDATORY_UPDATE_*` 设置。若将来上游补上 Linux 身份，放开
   `desktopPlatformEmbedsPolicy()` 即可。
-- **AppImage 以 `--no-sandbox` 运行**（electron-builder 对 AppImage 的默认行为，squashfs 挂载里的
-  `chrome-sandbox` 没法是 setuid root）。发 AppImage 前要定：接受无沙箱，还是改用
-  unprivileged user namespace 沙箱。deb / rpm 没有这个问题。
+- **AppImage 的沙箱**：electron-builder 的 legacy AppImage 工具集会在 `.desktop` 里写死
+  `Exec=AppRun --no-sandbox %U`，也就是菜单启动的每一次都没有 Chromium 沙箱。已用
+  `appImage: { executableArgs: [] }` 去掉这个 flag，决定权交给 AppRun 自己的
+  `unshare -Ur true` 探测——**宿主机支持 unprivileged user namespace 时渲染进程是有沙箱的**
+  （实测：独立 user namespace + seccomp 生效）。只有宿主机不支持时才会回落到无沙箱。
+  deb / rpm 走 `postinst` / `%post` 里同一套判断，行为一致。
 - `desktopUpdateMetadataFilename` 仍拒绝 `linux`。Linux 走 unsigned 不经过它；
   将来要 Linux 更新通道才需要动。
 - **`linux-unpacked` 约 1.1G**。asar 关闭后是小文件目录树，AppImage 压成 squashfs 后 339M，

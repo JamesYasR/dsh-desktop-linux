@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index bab440e..b5f867e 100644
+index bab440e..c97e5b1 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -22,7 +22,8 @@ import {
@@ -60,7 +60,7 @@ index bab440e..b5f867e 100644
      electronDist: buildPaths.electron,
      electronFuses: { runAsNode: true },
      beforeBuild: async () => {
-@@ -230,8 +243,25 @@ export function createElectronBuilderConfig(
+@@ -230,8 +243,32 @@ export function createElectronBuilderConfig(
      },
      linux: {
        category: 'Development',
@@ -77,6 +77,13 @@ index bab440e..b5f867e 100644
 +      ...(linuxPackages === undefined ? {} : { maintainer: linuxPackages.maintainer }),
 +      target: linuxFormats ?? ['AppImage'],
      },
++    // The legacy AppImage toolset otherwise writes "Exec=AppRun --no-sandbox %U", which turns off the
++    // Chromium sandbox for every launch from the desktop menu. An explicitly empty argument list keeps
++    // that flag out of the entry and leaves AppRun's own "unshare -Ur true" probe in charge: it adds the
++    // flag only where user namespaces are unavailable. Scoped to this target because the fpm targets
++    // take executableArgs from the linux options, where an empty array would leave a double space in
++    // their Exec line.
++    appImage: { executableArgs: [] },
 +    // fpm derives the package name from the scoped package.json name and otherwise falls back to the
 +    // product name, which contains a space. The Debian backend silently rewrites that, but rpmbuild
 +    // rejects it with "Tag takes single token only", so both formats name the package explicitly.
