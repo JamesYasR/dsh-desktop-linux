@@ -1,0 +1,141 @@
+diff --git a/.gitignore b/.gitignore
+index 86e330f..f872a4c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -2,6 +2,7 @@ CLAUDE.local.md
+ .env
+ apps/desktop/.env.windows
+ apps/desktop/.env.macos
++apps/desktop/.env.linux
+ apps/desktop/*.p12
+ node_modules/
+ lib/
+diff --git a/apps/desktop/.env.linux.example b/apps/desktop/.env.linux.example
+new file mode 100644
+index 0000000..c2a80f2
+--- /dev/null
++++ b/apps/desktop/.env.linux.example
+@@ -0,0 +1,29 @@
++# Copy to .env.linux (Git ignored). Use UTF-8 and quote secrets containing # or spaces.
++# Linux Desktop artifacts are built unsigned, so no signing, notarization, or certificate
++# setting applies. Credential file paths may be absolute or relative to apps/desktop.
++# Values are not shell-expanded.
++DSH_DESKTOP_APP_ID=com.deepseek.harness
++DSH_DESKTOP_AUTO_UPDATE_ENV=test
++
++# Optional npm registry for the bundled dsh runtime install; defaults to https://registry.npmjs.org/.
++# A local mirror such as https://registry.npmmirror.com speeds up repeated local packages.
++# DSH_DESKTOP_NPM_REGISTRY=https://registry.npmmirror.com
++
++# The selected mandatory-update origin is required, including unsigned and preparation builds.
++DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=
++DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=
++# Set approved login origins for test builds; omit allowedAuthOrigins for production.
++# Optional polling and fallback-page options belong in the same JSON value.
++# The fallback-page allowlist defaults to the selected service origin.
++DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"allowedAuthOrigins":["https://login.example.com"]}'
++
++# Optional upload configuration; packaging does not require these credentials.
++# DOWNLOAD_TEST_ORIGIN=
++# Required for test releases: 32 lowercase hexadecimal characters from a secure random generator.
++# DOWNLOAD_TEST_RELEASE_ID=
++# DOWNLOAD_TEST_COS_BUCKET=
++# DOWNLOAD_TEST_COS_SECRET_ID=
++# DOWNLOAD_TEST_COS_SECRET_KEY=
++# DOWNLOAD_PROD_COS_BUCKET=
++# DOWNLOAD_PROD_COS_SECRET_ID=
++# DOWNLOAD_PROD_COS_SECRET_KEY=
+diff --git a/apps/desktop/scripts/desktop-package-environment.d.mts b/apps/desktop/scripts/desktop-package-environment.d.mts
+index b0d7bc2..c158004 100644
+--- a/apps/desktop/scripts/desktop-package-environment.d.mts
++++ b/apps/desktop/scripts/desktop-package-environment.d.mts
+@@ -8,7 +8,7 @@
+  * @returns Isolated environment with file-owned release settings.
+  */
+ export function loadDesktopPackageEnvironment(
+-  platform: 'win32' | 'darwin',
++  platform: 'win32' | 'darwin' | 'linux',
+   environment?: NodeJS.ProcessEnv,
+   appRoot?: string,
+ ): NodeJS.ProcessEnv
+@@ -22,6 +22,6 @@ export function loadDesktopPackageEnvironment(
+  */
+ export function validateDesktopPackageEnvironment(
+   environment: NodeJS.ProcessEnv,
+-  target: { platform: 'win32' | 'darwin', arch: string },
++  target: { platform: 'win32' | 'darwin' | 'linux', arch: string },
+   options?: { unsigned?: boolean, prepareOnly?: boolean },
+ ): void
+diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
+index 3addf3f..a515bba 100644
+--- a/apps/desktop/scripts/desktop-package-environment.mjs
++++ b/apps/desktop/scripts/desktop-package-environment.mjs
+@@ -21,13 +21,13 @@ const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGN
+ 
+ /**
+  * Read the target's required UTF-8 dotenv file; release settings never fall back to ambient values.
+- * @param {'win32' | 'darwin'} platform Target platform.
++ * @param {'win32' | 'darwin' | 'linux'} platform Target platform.
+  * @param {NodeJS.ProcessEnv} environment Parent environment, retained only for unrelated build tools.
+  * @param {string} appRoot Desktop application directory; relative credential paths resolve here.
+  * @returns {NodeJS.ProcessEnv} Isolated environment with file-owned release settings.
+  */
+ export function loadDesktopPackageEnvironment(platform, environment = process.env, appRoot = APP_ROOT) {
+-  const path = join(appRoot, platform === 'win32' ? '.env.windows' : '.env.macos')
++  const path = join(appRoot, platform === 'win32' ? '.env.windows' : platform === 'darwin' ? '.env.macos' : '.env.linux')
+   let contents
+   try {
+     contents = readFileSync(path, 'utf8')
+@@ -43,9 +43,10 @@ export function loadDesktopPackageEnvironment(platform, environment = process.en
+     // Parser diagnostics can contain credential-bearing input.
+     throw new Error(`desktop package: invalid dotenv syntax in ${path}`)
+   }
+-  const platformSetting = platform === 'win32' ? WINDOWS_SETTING : MACOS_SETTING
++  // Linux artifacts are unsigned, so no platform-specific release setting applies.
++  const platformSetting = platform === 'win32' ? WINDOWS_SETTING : platform === 'darwin' ? MACOS_SETTING : undefined
+   for (const name of Object.keys(settings)) {
+-    if (!SHARED_SETTING.test(name) && !platformSetting.test(name)) {
++    if (!SHARED_SETTING.test(name) && !(platformSetting?.test(name) ?? false)) {
+       throw new Error(`desktop package: unsupported setting ${name} in ${path}; use the platform template`)
+     }
+     if (settings[name].includes('\0')) throw new Error(`desktop package: ${name} cannot contain a NUL character`)
+@@ -72,7 +73,7 @@ function requireReadableFile(environment, name) {
+ /**
+  * Validate release configuration before preparation without invoking a token or Apple's services.
+  * @param {NodeJS.ProcessEnv} environment File-owned release settings.
+- * @param {{ platform: 'win32' | 'darwin', arch: string }} target Selected release target.
++ * @param {{ platform: 'win32' | 'darwin' | 'linux', arch: string }} target Selected release target.
+  * @param {{ unsigned?: boolean, prepareOnly?: boolean }} options Explicit packaging mode.
+  * @returns {void}
+  */
+@@ -81,7 +82,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+   resolveNpmRegistry(environment)
+   resolveDesktopPolicyEnvironment(environment)
+   if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
+-  else resolveWindowsPackageSettings(environment)
++  else if (target.platform === 'win32') resolveWindowsPackageSettings(environment)
+   if (options.unsigned) return
+   if (!options.prepareOnly) resolveDesktopAutoUpdateConfig(environment, target.platform, target.arch)
+   if (target.platform === 'win32') {
+diff --git a/apps/desktop/scripts/desktop-toolchain-preflight.ts b/apps/desktop/scripts/desktop-toolchain-preflight.ts
+index ff855cf..08c8dc1 100644
+--- a/apps/desktop/scripts/desktop-toolchain-preflight.ts
++++ b/apps/desktop/scripts/desktop-toolchain-preflight.ts
+@@ -75,7 +75,7 @@ async function probeWindowsInstallerToolchain(environment: NodeJS.ProcessEnv): P
+  * @returns Every probe that failed, empty when the host can run the packaging sequence.
+  */
+ export async function probeDesktopToolchain(
+-  platform: 'darwin' | 'win32',
++  platform: 'darwin' | 'win32' | 'linux',
+   environment: NodeJS.ProcessEnv = process.env,
+ ): Promise<readonly DesktopToolchainProbeFailure[]> {
+   const failures: DesktopToolchainProbeFailure[] = []
+@@ -92,7 +92,7 @@ export async function probeDesktopToolchain(
+  * @returns Resolves when every probe passes.
+  */
+ export async function requireDesktopToolchain(
+-  platform: 'darwin' | 'win32',
++  platform: 'darwin' | 'win32' | 'linux',
+   environment: NodeJS.ProcessEnv = process.env,
+ ): Promise<void> {
+   const failures = await probeDesktopToolchain(platform, environment)

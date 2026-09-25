@@ -61,11 +61,20 @@ dev 模式（阶段 1，已验证可起窗口）：
 |---|---|---|
 | 0 | 建仓 + 隔离 | 完成 |
 | 1 | dev 模式验证（窗口能否弹出） | **完成：窗口正常弹出**，详见 `docs/findings.md` |
-| 2 | 定位打包失败点，打补丁 | 未开始 |
-| 3 | 原生模块（node-pty / sharp） | 风险下调：两个模块的 linux 二进制在当前版本都已就位 |
-| 4 | 产物：AppImage → deb → rpm → PKGBUILD | 未开始 |
+| 2 | 定位打包失败点，打补丁 | **7 个补丁已打，链路推进 5 个阶段**；卡在 sharp 段错误（见下） |
+| 3 | 原生模块（node-pty / sharp） | node-pty 与 sharp 的 linux 二进制都已就位，但 **sharp 在 Electron 下的解码会段错误**——升格为本项目当前唯一硬阻塞 |
+| 4 | 产物：AppImage → deb → rpm → PKGBUILD | 未开始（被阶段 3 阻塞） |
 | 5 | 验证矩阵（协议、profile 隔离、端口） | 部分提前验证：`dsh-app://` 正常、`profiles/desktop` 隔离、19387 端口一致 |
 | 6 | 回到上游 Discussion 汇报 | 未开始 |
+
+## 当前阻塞
+
+`sharp` 的 PNG **解码**在 Electron 44 / Linux 下段错误（编码正常，同样的代码在系统 Node 下正常）。
+根因是 sharp 官方记录过的 Electron/Linux 冲突：Electron 动态链接系统 glib 并把符号泄漏进进程空间
+（upstream: electron#46323）。这挡住了 `prepare:dsh` 的运行时冒烟，因此还产不出 `linux-unpacked`。
+
+候选方向见 `docs/findings.md`（换 WASM sharp / 把图像处理挪到 primary-runtime 的真 Node /
+等 upstream 修），需要决策。
 
 ## 纪律
 

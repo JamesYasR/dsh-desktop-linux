@@ -166,19 +166,163 @@ DSH_HOME=/tmp/dsh-desktop-test pnpm run dev:desktop
 
 ---
 
+## 2026-09-25 · 阶段 2 · 打包链路定位 —— **推进到 `prepare:dsh`，卡在 sharp 解码段错误**
+
+```bash
+cd upstream
+DSH_HOME=/tmp/dsh-desktop-test pnpm --dir apps/desktop run package:linux:x64:dir
+```
+
+### 打补丁前：BRIEF 预测的报错完全命中
+
+```
+$ tsx scripts/package-target.ts --dir
+Error: desktop package: unsupported build host linux-x64
+    at hostTargetName (package-target.ts)
+    at parseDesktopPackageInvocation (package-target.ts)
+```
+
+### 打完 7 个补丁后：链路推进了 5 个阶段
+
+```
+configuration ✓ → toolchain ✓ → build:official ✓ → release:pack(dsh+vendor+landlock) ✓
+→ prepare:runtime ✓ → prepare:packages ✓ → prepare:dsh ✗（32s 后 exit 1）
+```
+
+`prepare:runtime` 成功这一步很关键：它按 `desktopTargetPlatform('linux-x64')` 下载并解压了
+**linux-x64 的 Electron 44 发行包**，并跑通了 `electron -p process.versions.node` 取版本号——
+说明 target 化的 Electron 分发路径（补丁 0004）是对的。
+
+`desktop package: linux-x64 publishes 0.1.7-rc.2` 也已正常打出，说明
+`loadDesktopPackageEnvironment` / `validateDesktopPackageEnvironment`（补丁 0005）
+和 policy 设置都能在 Linux 下通过。
+
+### 失败点：`sharp` 的 PNG 解码在 Electron 44 / Linux 下段错误
+
+`prepare:dsh` 的最后一步是运行时冒烟（`tests/fixtures/runtime-payload-smoke.mjs`），
+它在打包用的 Electron Node 运行时下依次检查 pnpm / koffi / sharp / HTML / pty / ripgrep。
+插桩定位到**崩在 `checkSharp()`**：
+
+```
+>>> 3 checkKoffi
+>>> 3 done
+>>> 4 checkSharp
+(node:216611) [SharpElectronLinux] Warning: Binaries provided by Electron for use on Linux
+  may be incompatible with sharp - see https://sharp.pixelplumbing.com/install#electron-and-linux
+EXIT=139          ← Segmentation fault (core dumped)
+```
+
+**最小复现**（三行，可直接跑）：
+
+```bash
+T=apps/desktop/.desktop-build/targets/linux-x64
+cat > /tmp/sharp-decode.mjs <<'EOF'
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
+const req = createRequire(join(process.argv[2], 'package.json'))
+const sharp = req('sharp')
+const png = await sharp(Buffer.from([17,103,231]), { raw: { width: 1, height: 1, channels: 3 } }).png().toBuffer()
+console.error('encoded', png.length, '→ decode')
+const d = await sharp(png).raw().toBuffer({ resolveWithObject: true })
+console.error('decoded', d.info.width, d.info.height, d.info.channels)
+EOF
+
+# 打包用 Electron：编码成功，解码段错误
+ELECTRON_RUN_AS_NODE=1 "$T/electron/electron" --expose-internals /tmp/sharp-decode.mjs "$T/dsh"
+#   encoded 90 → decode
+#   Segmentation fault (core dumped)        EXIT=139
+
+# 同一个脚本、同一份 node_modules，换成系统 Node：完全正常
+node /tmp/sharp-decode.mjs "$T/dsh"
+#   encoded 90 → decode
+#   decoded 1 1 3                           EXIT=0
+```
+
+**隔离结论**：
+
+| 变量 | 结果 |
+|---|---|
+| sharp 编码（raw → png）在 Electron 下 | ✅ 通过（90 字节） |
+| sharp **解码**（png → raw）在 Electron 下 | ❌ SIGSEGV |
+| 同一解码在系统 Node 下 | ✅ 通过 |
+| 有无 koffi 的 `load(null)`/`unload()` | 与崩溃无关（两个变体都崩） |
+
+**根因**（sharp 官方 install 文档「Electron and Linux」一节原文）：
+> Binaries provided by Electron for use on Linux dynamically link against a globally-installed
+> `glib` and leak its symbols into the process space, which may cause the following error to occur:
+> … `GLib-GObject: g_object_ref: assertion 'G_IS_OBJECT (object)' failed`
+> Please subscribe to electron#46323 for updates.
+
+本机实测与文档一致：
+
+```
+$ ldd .desktop-build/targets/linux-x64/electron/electron | grep glib
+    libglib-2.0.so.0  => /usr/lib/libglib-2.0.so.0     ← Electron 动态链接系统 glib
+    libgobject-2.0.so.0 => /usr/lib/libgobject-2.0.so.0
+    libgio-2.0.so.0   => /usr/lib/libgio-2.0.so.0
+$ pacman -Q glib2
+    glib2 2.88.3-1
+```
+
+Electron 进程空间里已经加载了系统 glib，sharp 自带的 libvips
+（`@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.6`，**不自带 glib**）随后绑定到它，
+在走 GLib 的加载器路径（PNG 解码）时崩溃。
+
+> 注意这是**版本相关**的：sharp 文档说的是 "may cause"。在 glib 版本与 libvips
+> 期望更接近的发行版上可能不复现。本机 Arch + glib 2.88.3 稳定复现。
+
+### 这个阻塞点不是白名单能修的
+
+前 7 个补丁都是「把已有支持放出来」形状的改动，这一个不是。候选方向（需要决策，尚未验证）：
+
+1. **换 WASM sharp**（`@img/sharp-wasm32`）——绕开原生 libvips 与 glib，代价是性能与功能覆盖。
+2. **把图像处理挪出 Electron 进程**——primary-runtime 里本来就带一个**真正的 Node**
+   （`primary-runtime/dependencies/node`），sharp 在真 Node 下正常。但要改上游的运行时分工。
+3. **接受冒烟失败**，在补丁里让 Linux 跳过 `checkSharp`——这会把一个真实的崩溃藏起来，
+   而 `sharp` 在桌面端是图像附件/图片卸载路径上的依赖，**不建议**。
+4. 等 upstream 修 electron#46323。
+
+**在解决之前，`package:linux:x64:dir` 无法走完**，因此还没有 `linux-unpacked` 产物。
+
+### 另一个需要产品决策的点：Linux 的 mandatory-update policy origin
+
+`resolveDesktopPolicyEnvironment` 在 `--unsigned` 提前返回**之前**执行，所以即使是
+unsigned 的 Linux 构建也**必须**提供 `DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN`
+（或 PROD），且 test 部署还要求 `allowedAuthOrigins` 非空。
+
+目前 `apps/desktop/.env.linux` 里用的是占位值 `https://example.invalid`。
+它只影响打包产物里的 `dshMandatoryUpdatePolicy` 元数据，不影响构建能否完成，
+但**发布前必须替换成真实决策**（真实 origin，或者为 Linux 明确关掉这条策略）。
+
+---
+
 ## 补丁清单
 
-| 补丁 | 内容 | 状态 |
+全部相对上游 `477b4f4`，一个文件只属于一个补丁，按文件名顺序应用。
+已验证：在 pristine worktree 上 7 个补丁按序 `git apply` 全部干净通过，且结果与开发工作树逐字节一致。
+
+| 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
-| `0001-desktop-target-allow-linux-x64.patch` | `desktop-build-paths.mjs` 的 `SUPPORTED_TARGETS` + JSDoc 类型 + `desktopTargetPlatform` 的 linux 分支；`desktop-auto-update-environment.mjs/.d.mts` 的 `UPDATE_TARGETS` 与类型 | 已验证可干净重放，且是窗口能起来的必要条件 |
+| `0001-desktop-target-model-add-linux-x64.patch` | `desktop-build-paths.{mjs,d.mts}`、`desktop-auto-update-environment.{mjs,d.mts}` | target 白名单加 `linux-x64`；`desktopTargetPlatform` 返回 `'linux'`；新增 `desktopElectronExecutablePath()`（mac 在 bundle 里，win/linux 在根） |
+| `0002-package-target-add-linux-x64.patch` | `package-target.ts`、`desktop-upload-plan.ts` | 打包目标表加 `linux-x64`（`--linux`/`--x64`）+ Linux 构建主机校验；放宽 `--unsigned` 到 win/linux |
+| `0003-electron-builder-allow-unsigned-linux.patch` | `electron-builder-config.mjs` | 放宽 `unsigned builds require Windows` → Windows 或 Linux（AppImage 不需要签名） |
+| `0004-prepare-target-electron-distribution.patch` | `prepare-runtime.ts`、`prepare-dsh.ts` | 修掉两处「非 mac 即 win32」/「用构建主机平台」的 Electron 路径推导，改用 target |
+| `0005-desktop-linux-release-settings.patch` | `desktop-package-environment.{mjs,d.mts}`、`desktop-toolchain-preflight.ts`、`.gitignore`、`.env.linux.example` | 读 `.env.linux`；Linux 不套用 Windows/macOS 专属设置；工具链探测与类型联合接受 `linux` |
+| `0006-desktop-package-linux-scripts.patch` | `apps/desktop/package.json` | 加 `package:linux:x64` / `package:linux:x64:dir`（都带 `--unsigned`） |
+| `0007-tests-linux-x64-supported.patch` | 3 个 `tests/*.spec.ts` | 把「断言 Linux 抛错」改成「断言 Linux 受支持」，并补 `desktopElectronExecutablePath` 的用例 |
 
-尚未打、阶段 2 需要：
+补丁 0007 单独跑过：`vitest run` 三个 spec 全绿（41 tests）。补丁应用后
+`tsc -b tsconfig.host.json` 全绿（0 errors）。
 
-- `package-target.ts` 的 `DesktopPackageTargetName` / `TARGETS` 表 / `resolveDesktopPackageTarget`
-- `desktop-upload-plan.ts` 的 `TARGETS`（`satisfies Record<DesktopPackageTargetName, …>`，加目标必须同步加条目）
-- `electron-builder-config.mjs` 里 `unsigned && resolvedPlatform !== 'win32'` 那条限制
-- `apps/desktop/package.json` 加 `package:linux:x64` 脚本
-- 上节列出的四个测试断言
+### 仍未解决 / 待办
+
+- **sharp 在 Electron 下的解码段错误**（本轮唯一硬阻塞，见上）。
+- Linux 的 mandatory-update policy origin 需产品决策。
+- `prepare-dsh.ts` 里 `const target = { platform: process.platform, … }` 用的是**构建主机**平台。
+  在 Linux x64 主机上构建 linux-x64 恰好正确，但构建 linux-arm64 会错。本轮未改（保持最小补丁）。
+- `desktopUpdateMetadataFilename` 仍拒绝 `linux`——目前只有 upload plan 与 macOS 打包用得到，
+  Linux 走 unsigned（`update === undefined`）不经过它。若将来要 Linux 更新通道，需一并改。
+
 
 ---
 
