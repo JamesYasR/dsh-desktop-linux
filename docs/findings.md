@@ -349,7 +349,7 @@ payload 的原生模块是按「谁来加载它」解析的，所以这两处也
 Linux 记 primary-runtime 的 24.21.0，macOS / Windows 仍记 Electron 的 Node。
 `tests/fixtures/runtime-payload-smoke.mjs` 里那两处 Electron 专属断言相应改成按平台判断。
 
-### 产物布局：asar 与真 Node 不兼容（补丁 0010）
+### 产物布局：asar 与真 Node 不兼容（补丁 0003 / 0009）
 
 `prepare:dsh` 通过后 electron-builder 能出 `linux-unpacked`，但**打包后的 smoke 立刻失败**：
 
@@ -369,7 +369,7 @@ Error: ENOTDIR: not a directory, open '…/resources/app.asar/dsh/desktop-runtim
 顺带修掉一个 Linux 打包缺陷：electron-builder 默认拿 package name 当可执行文件名，
 产出的是 `@deepseek-aidsh-desktop`。现在显式 `linux.executableName = 'deepseek-harness'`。
 
-### mandatory-update 策略：Linux 不参与（补丁 0011，取代上一轮的「需要产品决策」）
+### mandatory-update 策略：Linux 不参与（补丁 0010，取代上一轮的「需要产品决策」）
 
 上一轮记录的是「policy origin 必填，占位值发布前要换成真实值」。查到实情后结论变了。
 
@@ -446,17 +446,17 @@ electron-builder 会警告 `desktopName is not set in package.json`。Electron �
 
 ### 仍未解决 / 待办（阶段 3 结束时）
 
-- **deb / rpm 还没接**。`linux.target` 目前只有 `AppImage`。
+- ~~**deb / rpm 还没接**~~ → **阶段 4 已解决**。`linux.target` 原先只有 `AppImage`；
   electron-builder 的 deb/rpm 走 fpm，要求 `linux.maintainer` 与 `homepage` 两个包元数据
   （本仓库的 `package.json` 既没有 `author` 也没有 `homepage`，fpm 会直接报
   `authorEmailIsMissed` / `Please specify project homepage`）；rpm 还额外需要系统装
   `rpmbuild`（本机没有，Arch 上是 `rpm-tools`）。maintainer 是要写进 Debian control 的
-  真实身份，属于需要产品输入的信息，所以没有先塞占位值。`build.sh --deb/--rpm/--all`
-  会明确报错而不是静默只出 AppImage。
+  真实身份，属于需要产品输入的信息，所以当时没有先塞占位值。
 - **AppImage 以 `--no-sandbox` 运行**。这是 electron-builder 对 AppImage 的默认行为
   （squashfs 挂载里的 `chrome-sandbox` 没法是 setuid root），生成的 .desktop 里
   `Exec=AppRun --no-sandbox %U`。也就是说 AppImage 版本没有 Chromium 沙箱——
-  这正是 deb 有价值的地方（deb 里 `chrome-sandbox` 能装成 setuid root）。
+  这正是 deb / rpm 有价值的地方（阶段 4 确认了它们的 `postinst` / `%post` 会按宿主机是否支持
+  user namespace 决定 `chrome-sandbox` 是否 setuid，两种情况都有沙箱可用）。
   发 AppImage 前需要决定：接受无沙箱，还是改用 unprivileged user namespace 沙箱。
 - **PKGBUILD 未在干净的 makepkg 环境里验证**。
 - `desktopUpdateMetadataFilename` 仍拒绝 `linux`。Linux 走 unsigned 不经过它；
@@ -464,25 +464,172 @@ electron-builder 会警告 `desktopName is not set in package.json`。Electron �
 - `linux-unpacked` 约 1.1G（asar 关闭后是小文件目录树）。AppImage 压成 squashfs 后 339M，
   但首次启动的文件读取比 asar 多。
 
+## 2026-09-26 · 阶段 4 · 产物：AppImage / deb / rpm —— **通过**
+
+### 先查清楚 fpm 到底要什么
+
+deb / rpm 都由 electron-builder 的 fpm 目标产出，而 fpm 是 electron-builder **自己下载**的
+（`~/.cache/electron-builder/fpm@2.1.4/fpm-1.17.0-ruby-3.4.3-linux-amd64.7z`），
+**不需要系统装 ruby**。真正需要宿主机提供的东西只有一样：
+
+| 格式 | 需要什么 |
+|---|---|
+| AppImage | 无（electron-builder 自带 appimage 工具） |
+| deb | `ar` + `tar` + `xz`。**不需要 `dpkg`**——fpm 自己写 ar 归档 |
+| rpm | `rpmbuild`（Arch 上是 `rpm-tools`），外加 `xz` |
+
+`FpmTarget.computeFpmMetaInfoOptions()` 卡两个字段：
+
+- `projectUrl = appInfo.computePackageUrl()`，为 null 就报 `Please specify project homepage`；
+- `author = options.maintainer`，为 null 才回落到 package.json 的 `author.email`，没有就报
+  `authorEmailIsMissed`。
+
+`AppInfo.computePackageUrl()` 的取数链是 `metadata.homepage || devMetadata.homepage`，再回落到
+GitHub 仓库地址。关键在 `packager.js`：
+
+```js
+this._originalMetadata = deepAssign({}, this._metadata)
+deepAssign(this._metadata, configuration.extraMetadata)
+```
+
+`extraMetadata` 在 `AppInfo` 读取之前并进 `metadata`，所以 **homepage 能从 electron-builder
+配置注入，不用动上游的 `package.json`**。maintainer 走 `linux.maintainer`，
+homepage 走 `extraMetadata.homepage`。
+
+### 决策：包元数据进 `.env.linux`，格式选择进环境变量
+
+两者性质不同，所以去处也不同：
+
+- **maintainer / homepage 是发布设置**——每个仓库一套，跟着 release 走。放
+  `apps/desktop/.env.linux`，和 `DSH_DESKTOP_APP_ID` 同一层，由 `build.sh` 首次运行从
+  `.env.linux.example` 生成。同时把 `DSH_DESKTOP_LINUX_.*` 加进
+  `AMBIENT_RELEASE_SETTING`，保证它**只由文件拥有**（发布设置不从环境回落，这是原文件写死的规矩）。
+- **打哪几种格式是构建选择器**——和 `DSH_DESKTOP_TARGET_PLATFORM` / `_ARCH` 同类，
+  所以叫 `DSH_DESKTOP_TARGET_FORMATS`，只能从环境传，写进 `.env.linux` 会被白名单拒收。
+  理由很实际：文件里的值会盖掉环境里的值，那样 `build.sh --deb` 就不管用了。
+
+缺省只出 AppImage，所以 **AppImage-only 的构建不需要 maintainer/homepage**；只有选中 deb/rpm
+才要求，而且校验发生在流水线最前面的 `configuration` 阶段，不会等 fpm 跑起来才报错。
+
+### 三个「默认值其实是错的」的字段
+
+第一版 deb 出来了，control 文件里有两处不对：
+
+```
+Section: default
+Description: 
+  Electron desktop shell for a bundled dsh runtime and external plugins
+```
+
+- `Section: default` 不是任何 Debian section（那是 fpm `--category` 的缺省值）。
+- `Description` 第一行是空的。fpm 对 deb 拼的是 `` `${synopsis || ""}\n ${description}` ``，
+  `linux.synopsis` 没设 → 第一行空。Debian policy 要求第一行是 synopsis。
+
+rpm 那边更直接——**rpmbuild 直接失败**，而且 fpm 只把 exit code 抛出来，看不到原因：
+
+```
+{timestamp: "...", message: "Process failed: rpmbuild failed (exit code 1). ...", level: :error}
+```
+
+用 `FPM_DEBUG` 之外的办法复现（直接跑 fpm 加 `--debug`）才拿到真正那行：
+
+```
+error: line 39: Tag takes single token only: Name: DeepSeek Harness
+```
+
+根因：fpm 的包名来自 `appInfo.linuxPackageName`。package.json 的 name 是
+`@deepseek-ai/dsh-desktop`（scoped），于是回落到 `sanitizedProductName` = `DeepSeek Harness`
+——**带空格**。deb 后端会静默把它改写成 `deepseek-harness`（所以 deb 一直是对的，
+但那是巧合），rpm 后端原样写进 spec，`Name:` 就带了空格。
+
+顺带确认了一件事：**安装路径里的空格不是问题**。`/opt/DeepSeek Harness` 是
+`LinuxTargetHelper.installPrefix`（常量 `/opt`）+ `sanitizedProductName`，fpm 的 rpm 后端能正确
+处理——单独跑一个最小 fpm 复现验证过 `rpm -qpl` 列出的路径是对的。所以只需要钉住包名。
+
+最终显式给出 `deb.packageName` / `rpm.packageName` / `deb.packageCategory` /
+`rpm.packageCategory` / `linux.synopsis`。
+
+### 产物元数据（实测）
+
+```
+$ rpm -qip deepseek-harness-0.1.7-rc.2-linux-x86_64-unsigned.rpm
+Name        : deepseek-harness
+Version     : 0.1.7~rc.2
+Release     : 1
+Architecture: x86_64
+Group       : Development/Tools
+Size        : 1123373413
+License     : MIT
+Packager    : ffyfox <299493445+ffyfox@users.noreply.github.com>
+Vendor      : ffyfox <299493445+ffyfox@users.noreply.github.com>
+URL         : https://github.com/deepseek-ai/deepseek-harness
+Summary     : DeepSeek Harness desktop application
+```
+
+```
+$ ar x …deb && tar xOf control.tar.xz ./control
+Package: deepseek-harness
+Version: 0.1.7~rc.2
+Architecture: amd64
+Maintainer: ffyfox <299493445+ffyfox@users.noreply.github.com>
+Installed-Size: 1097044
+Depends: libgtk-3-0, libnotify4, libnss3, libxss1, libxtst6, xdg-utils, libatspi2.0-0, libuuid1, libsecret-1-0
+Recommends: libappindicator3-1
+Section: devel
+Priority: optional
+Homepage: https://github.com/deepseek-ai/deepseek-harness
+Description: DeepSeek Harness desktop application
+  Electron desktop shell for a bundled dsh runtime and external plugins
+```
+
+两点值得记：
+
+- **`0.1.7-rc.2` 变成 `0.1.7~rc.2`**。fpm 把预发布的 `-` 换成 `~`，这是对的：
+  Debian 的版本序里 `~` 排在空串之前，所以 `0.1.7~rc.2 < 0.1.7`。rpm 也吃 `~`
+  （`rpmlib(TildeInVersions)`）。不需要我们干预。
+- **rpm 的依赖保留了 rich dependency**：`(libXtst or libXtst6)`、`(libuuid or libuuid1)`
+  原样进了 header，这是 electron-builder 给 rpm 的缺省 depends 里的写法。
+
+### deb 的 postinst 顺手把「沙箱」这件事回答了
+
+阶段 3 留了个疑问：AppImage 的 `.desktop` 带 `--no-sandbox`（squashfs 里的 `chrome-sandbox`
+没法是 setuid），deb 是不是就能有沙箱。答案在 electron-builder 生成的 `postinst` 里：
+
+```bash
+if ! { [[ -L /proc/self/ns/user ]] && unshare --user true; }; then
+    # Use SUID chrome-sandbox only on systems without user namespaces:
+    chmod 4755 '/opt/DeepSeek Harness/chrome-sandbox' || true
+else
+    chmod 0755 '/opt/DeepSeek Harness/chrome-sandbox' || true
+fi
+```
+
+也就是说 **deb 是有沙箱的**，走哪条路由宿主机决定：内核支持 unprivileged user namespace 就用
+namespace 沙箱（不打 setuid），不支持才退回 setuid `chrome-sandbox`。rpm 的 `%post` 是同一份脚本。
+`postinst` 还会用 update-alternatives 注册 `/usr/bin/deepseek-harness`，并在检测到 AppArmor
+支持时装一份随包分发的 profile（`resources/apparmor-profile` 确实在包里）。
+
+### 结果
+
+```
+configuration ✓ → toolchain ✓ → build:official ✓ → release:pack ✓
+→ prepare:runtime ✓ → prepare:packages ✓ → prepare:dsh ✓ → package ✓ → smoke:packaged ✓
+```
+
+一次 `--all` 跑出三个产物，`smoke:packaged` 照常通过（`"sharp":true`）：
+
+| 产物 | 大小 |
+|---|---|
+| `…-linux-x86_64-unsigned.AppImage` | 339M |
+| `…-linux-amd64-unsigned.deb` | 291M |
+| `…-linux-x86_64-unsigned.rpm` | 233M |
+
+`./scripts/verify.sh`：10 通过 / 0 失败。
+
 ## 补丁清单
 
-全部相对上游 `477b4f4`，一个文件只属于一个补丁，按文件名顺序应用。
-每个补丁都单独在 pristine worktree 上验证过：按序 `git apply` 全部干净通过，
-结果与开发工作树逐字节一致。
-
-| 补丁 | 覆盖文件 | 内容 |
-|---|---|---|
-| `0001-desktop-target-model-add-linux-x64.patch` | `desktop-build-paths.{mjs,d.mts}`、`desktop-auto-update-environment.{mjs,d.mts}` | target 白名单加 `linux-x64`；`desktopTargetPlatform` 返回 `'linux'`；新增 `desktopElectronExecutablePath()`（mac 在 bundle 里，win/linux 在根） |
-| `0002-package-target-add-linux-x64.patch` | `package-target.ts`、`desktop-upload-plan.ts` | 打包目标表加 `linux-x64`（`--linux`/`--x64`）+ Linux 构建主机校验；放宽 `--unsigned` 到 win/linux |
-| `0003-electron-builder-allow-unsigned-linux.patch` | `electron-builder-config.mjs` | 放宽 `unsigned builds require Windows` → Windows 或 Linux（AppImage 不需要签名） |
-| `0004-prepare-target-electron-distribution.patch` | `prepare-runtime.ts`、`prepare-dsh.ts` | 修掉两处「非 mac 即 win32」/「用构建主机平台」的 Electron 路径推导，改用 target |
-| `0005-desktop-linux-release-settings.patch` | `desktop-package-environment.{mjs,d.mts}`、`desktop-toolchain-preflight.ts`、`.gitignore`、`.env.linux.example` | 读 `.env.linux`；Linux 不套用 Windows/macOS 专属设置；工具链探测与类型联合接受 `linux` |
-| `0006-desktop-package-linux-scripts.patch` | `apps/desktop/package.json` | 加 `package:linux:x64` / `package:linux:x64:dir`（都带 `--unsigned`） |
-| `0007-tests-linux-x64-supported.patch` | 3 个 `tests/*.spec.ts` | 把「断言 Linux 抛错」改成「断言 Linux 受支持」，并补 `desktopElectronExecutablePath` 的用例 |
-| `0008-desktop-host-runtime-linux-standalone-node.patch` | `node-environment.ts`、`host-process.ts`、`main.ts`、`desktop-host/src/index.ts`、`scripts/node-bin/node`、`smoke-runtime.ts`、`sign-primary-runtime.ts`、`tests/node-environment.spec.ts`、`tests/host-process.spec.ts`、`tests/prepared-runtime-smoke.spec.ts`、`tests/welcome-flow.e2e.ts`、`apps/cli/tests/desktop-host.e2e.ts` | 引入 `DesktopNodeRuntime`；Linux 上 Host 走 primary-runtime 的真 Node；`ELECTRON_RUN_AS_NODE` 只在真 Electron 运行时下设置 |
-| `0009-desktop-prepare-under-host-runtime.patch` | `prepare-dsh.ts`、`prepare-runtime.ts`、`dev.ts`、`smoke-prepared-runtime.ts`、`smoke-packaged-runtime.ts`、`tests/fixtures/runtime-payload-smoke.mjs` | 打包期的 `pnpm install` 与运行时 smoke 改用 Host 运行时；`versions.json.node` 记为 payload 实际运行的 Node 版本 |
-| `0010-desktop-linux-unpacked-application.patch` | `electron-builder-config.mjs`、`smoke-packaged-runtime.ts` | Linux 关闭 asar（真 Node 读不了归档）+ 显式 `executableName`；打包后对真目录树做完整性校验 |
-| `0011-desktop-linux-policy-opt-out.patch` | `desktop-policy-environment.{mjs,d.mts}`、`desktop-package-environment.mjs`、`electron-builder-config.mjs`、`.env.linux.example`、`tests/desktop-policy-environment.spec.ts` | 新增 `desktopPlatformEmbedsPolicy()`；Linux 不嵌入、不轮询强制更新策略；修掉 `win32 ? … : macOS` 的隐含假设 |
+见 `patches/README.md`——那里是补丁清单的唯一归属地（本文件不再重复一份，之前那份已经和
+实际文件名对不上了）。
 
 ## 背景速查（来自 BRIEF.md）
 

@@ -1,0 +1,196 @@
+diff --git a/apps/desktop/scripts/desktop-linux-packages.d.mts b/apps/desktop/scripts/desktop-linux-packages.d.mts
+new file mode 100644
+index 0000000..96c6e2d
+--- /dev/null
++++ b/apps/desktop/scripts/desktop-linux-packages.d.mts
+@@ -0,0 +1,34 @@
++/** Linux package formats and the control metadata the Debian and RPM formats carry. */
++
++/** Environment variable that selects the Linux package formats one packaging run emits. */
++export const LINUX_FORMATS_ENV: string
++
++/** Environment variable that supplies the maintainer recorded in the Debian and RPM control files. */
++export const LINUX_MAINTAINER_ENV: string
++
++/** Environment variable that supplies the project URL recorded in the Debian and RPM control files. */
++export const LINUX_HOMEPAGE_ENV: string
++
++/** Maintainer and project URL recorded in a Debian or RPM control file. */
++export interface DesktopLinuxPackageMetadata {
++  maintainer: string
++  homepage: string
++}
++
++/**
++ * Resolve the Linux package formats this run emits.
++ * @param environment Packaging environment.
++ * @returns Format names in build order, without duplicates; AppImage unless configured.
++ */
++export function resolveDesktopLinuxFormats(environment?: NodeJS.ProcessEnv): string[]
++
++/**
++ * Resolve the control metadata the selected formats carry.
++ * @param environment File-owned release settings.
++ * @param formats Formats this run emits; defaults to the resolved selection.
++ * @returns Metadata, or undefined when no selected format carries any.
++ */
++export function resolveDesktopLinuxPackageMetadata(
++  environment?: NodeJS.ProcessEnv,
++  formats?: string[],
++): DesktopLinuxPackageMetadata | undefined
+diff --git a/apps/desktop/scripts/desktop-linux-packages.mjs b/apps/desktop/scripts/desktop-linux-packages.mjs
+new file mode 100644
+index 0000000..fd4e588
+--- /dev/null
++++ b/apps/desktop/scripts/desktop-linux-packages.mjs
+@@ -0,0 +1,69 @@
++/** Select the Linux package formats one run emits and resolve the control metadata they carry. */
++
++/** Environment variable that selects the Linux package formats one packaging run emits. */
++export const LINUX_FORMATS_ENV = 'DSH_DESKTOP_TARGET_FORMATS'
++
++/** Environment variable that supplies the maintainer recorded in the Debian and RPM control files. */
++export const LINUX_MAINTAINER_ENV = 'DSH_DESKTOP_LINUX_MAINTAINER'
++
++/** Environment variable that supplies the project URL recorded in the Debian and RPM control files. */
++export const LINUX_HOMEPAGE_ENV = 'DSH_DESKTOP_LINUX_HOMEPAGE'
++
++const DEFAULT_FORMATS = ['AppImage']
++
++// fpm builds these from a control file that names a maintainer and a project URL, and refuses to
++// build either format without them.
++const METADATA_FORMATS = new Set(['deb', 'rpm'])
++
++const MAINTAINER = /^[^<>]+<[^<>\s]+@[^<>\s]+>$/u
++
++/**
++ * Resolve the Linux package formats this run emits.
++ * @param {NodeJS.ProcessEnv} environment Packaging environment.
++ * @returns {string[]} Format names in build order, without duplicates; AppImage unless configured.
++ */
++export function resolveDesktopLinuxFormats(environment = process.env) {
++  const configured = environment[LINUX_FORMATS_ENV]
++  if (configured === undefined || configured.trim() === '') return DEFAULT_FORMATS
++  const formats = configured.split(',').map(format => format.trim())
++  if (formats.some(format => format === '')) {
++    throw new Error(`desktop package: ${LINUX_FORMATS_ENV} must be a comma-separated list of target names without empty entries`)
++  }
++  return [...new Set(formats)]
++}
++
++/**
++ * Resolve the control metadata the selected formats carry.
++ * @param {NodeJS.ProcessEnv} environment File-owned release settings.
++ * @param {string[]} formats Formats this run emits; defaults to the resolved selection.
++ * @returns {{ maintainer: string, homepage: string } | undefined} Metadata, or undefined when no selected format carries any.
++ */
++export function resolveDesktopLinuxPackageMetadata(environment = process.env, formats = resolveDesktopLinuxFormats(environment)) {
++  const requiring = formats.filter(format => METADATA_FORMATS.has(format))
++  if (requiring.length === 0) return undefined
++  const maintainer = environment[LINUX_MAINTAINER_ENV]?.trim() ?? ''
++  const homepage = environment[LINUX_HOMEPAGE_ENV]?.trim() ?? ''
++  const problems = []
++  if (!MAINTAINER.test(maintainer)) {
++    problems.push(`${LINUX_MAINTAINER_ENV} must be "Name <email>", the maintainer of this package rather than the upstream author`)
++  }
++  if (!isAbsoluteHttpUrl(homepage)) {
++    problems.push(`${LINUX_HOMEPAGE_ENV} must be an absolute http or https URL`)
++  }
++  if (problems.length > 0) {
++    const listed = requiring.join(' and ')
++    throw new Error(`desktop package: ${listed} ${requiring.length === 1 ? 'carries' : 'carry'} a maintainer and a project URL:\n${
++      problems.map(problem => `  ${problem}`).join('\n')}`)
++  }
++  return { maintainer, homepage }
++}
++
++function isAbsoluteHttpUrl(value) {
++  let url
++  try { url = new URL(value) }
++  catch {
++    // The URL parser rejects every relative or malformed value, which is what this predicate reports.
++    return false
++  }
++  return url.protocol === 'https:' || url.protocol === 'http:'
++}
+diff --git a/apps/desktop/tests/desktop-linux-packages.spec.ts b/apps/desktop/tests/desktop-linux-packages.spec.ts
+new file mode 100644
+index 0000000..1e0a341
+--- /dev/null
++++ b/apps/desktop/tests/desktop-linux-packages.spec.ts
+@@ -0,0 +1,75 @@
++import { describe, expect, it } from 'vitest'
++import {
++  LINUX_FORMATS_ENV,
++  LINUX_HOMEPAGE_ENV,
++  LINUX_MAINTAINER_ENV,
++  resolveDesktopLinuxFormats,
++  resolveDesktopLinuxPackageMetadata,
++} from '../scripts/desktop-linux-packages.mjs'
++
++const MAINTAINER = 'ffyfox <299493445+ffyfox@users.noreply.github.com>'
++const HOMEPAGE = 'https://github.com/deepseek-ai/deepseek-harness'
++const METADATA = { [LINUX_MAINTAINER_ENV]: MAINTAINER, [LINUX_HOMEPAGE_ENV]: HOMEPAGE }
++
++describe('Desktop Linux package formats', () => {
++  it('emits AppImage alone unless the run selects formats', () => {
++    expect(resolveDesktopLinuxFormats({})).toEqual(['AppImage'])
++    expect(resolveDesktopLinuxFormats({ [LINUX_FORMATS_ENV]: '   ' })).toEqual(['AppImage'])
++  })
++
++  it('reads the selection in build order without duplicates', () => {
++    expect(resolveDesktopLinuxFormats({ [LINUX_FORMATS_ENV]: 'AppImage,deb,rpm' })).toEqual(['AppImage', 'deb', 'rpm'])
++    expect(resolveDesktopLinuxFormats({ [LINUX_FORMATS_ENV]: ' deb , deb ,rpm ' })).toEqual(['deb', 'rpm'])
++  })
++
++  it.each(['deb,', ',deb', 'deb,,rpm', ','])('rejects the empty entry in %j', (value) => {
++    expect(() => resolveDesktopLinuxFormats({ [LINUX_FORMATS_ENV]: value })).toThrow(/without empty entries/u)
++  })
++})
++
++describe('Desktop Linux package metadata', () => {
++  it('requires nothing from the formats that carry no control file', () => {
++    expect(resolveDesktopLinuxPackageMetadata({}, ['AppImage'])).toBeUndefined()
++    expect(resolveDesktopLinuxPackageMetadata(METADATA, [])).toBeUndefined()
++  })
++
++  it.each(['deb', 'rpm', 'AppImage,rpm'])('resolves the maintainer and project URL for %s', (selection) => {
++    expect(resolveDesktopLinuxPackageMetadata(METADATA, selection.split(',')))
++      .toEqual({ maintainer: MAINTAINER, homepage: HOMEPAGE })
++  })
++
++  it('takes the format selection from the environment when none is passed', () => {
++    expect(resolveDesktopLinuxPackageMetadata(METADATA)).toBeUndefined()
++    expect(resolveDesktopLinuxPackageMetadata({ ...METADATA, [LINUX_FORMATS_ENV]: 'deb' }))
++      .toEqual({ maintainer: MAINTAINER, homepage: HOMEPAGE })
++  })
++
++  it.each(['', '   ', 'ffyfox', 'ffyfox@users.noreply.github.com', '<ffyfox@users.noreply.github.com>', 'ffyfox <not-an-address>'])(
++    'rejects maintainer %j',
++    (maintainer) => {
++      expect(() => resolveDesktopLinuxPackageMetadata({ ...METADATA, [LINUX_MAINTAINER_ENV]: maintainer }, ['deb']))
++        .toThrow(/DSH_DESKTOP_LINUX_MAINTAINER/u)
++    },
++  )
++
++  it.each(['', 'not-a-url', 'github.com/deepseek-ai/deepseek-harness', 'ftp://example.com/', 'mailto:someone@example.com'])(
++    'rejects homepage %j',
++    (homepage) => {
++      expect(() => resolveDesktopLinuxPackageMetadata({ ...METADATA, [LINUX_HOMEPAGE_ENV]: homepage }, ['rpm']))
++        .toThrow(/DSH_DESKTOP_LINUX_HOMEPAGE/u)
++    },
++  )
++
++  it('accepts an http homepage and trims both values', () => {
++    expect(resolveDesktopLinuxPackageMetadata({
++      [LINUX_MAINTAINER_ENV]: `  ${MAINTAINER}  `, [LINUX_HOMEPAGE_ENV]: '  http://example.com/  ',
++    }, ['deb'])).toEqual({ maintainer: MAINTAINER, homepage: 'http://example.com/' })
++  })
++
++  it('names every missing setting and the formats that need it in one failure', () => {
++    expect(() => resolveDesktopLinuxPackageMetadata({}, ['deb', 'rpm']))
++      .toThrow(/deb and rpm carry a maintainer and a project URL:[\s\S]*MAINTAINER[\s\S]*HOMEPAGE/u)
++    expect(() => resolveDesktopLinuxPackageMetadata({}, ['rpm']))
++      .toThrow(/^desktop package: rpm carries a maintainer and a project URL:/u)
++  })
++})
