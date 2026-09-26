@@ -191,6 +191,17 @@ if (( RUNTIME )); then
     }
     trap cleanup EXIT
 
+    # 纪律判据：整个活体过程不许改真实的 ~/.dsh。
+    # 比的是「跑前跑后是否一致」，不是「目录是否存在」—— 只要这台机器上装过并用过桌面端，
+    # ~/.dsh/profiles/desktop 就必然存在（已装版用的就是真实的 DSH_HOME），断言不存在的话
+    # 每次都会误报。指纹取文件名/类型/大小/mtime，改动或新增都会被看出来。
+    real_desktop_fingerprint() {
+      local d="$HOME/.dsh/profiles/desktop"
+      [[ -e "$d" ]] || { printf 'absent\n'; return 0; }
+      find "$d" -mindepth 1 -printf '%P\t%y\t%s\t%T@\n' 2>/dev/null | sort
+    }
+    real_desktop_before="$(real_desktop_fingerprint)"
+
     # 哨兵：桌面端只许动 profiles/desktop 与共享根，不许碰别的 profile。
     mkdir -p "$LIVE/profiles/web"
     echo "sentinel" >"$LIVE/profiles/web/SENTINEL"
@@ -308,10 +319,14 @@ CDP
     fi
 
     # 纪律：整个活体过程不许碰真实的 ~/.dsh。
-    if [[ -e "$HOME/.dsh/profiles/desktop" ]]; then
-      bad "真实的 ~/.dsh/profiles/desktop 出现了——桌面端泄漏到了正在使用的数据目录"
+    if [[ "$(real_desktop_fingerprint)" == "$real_desktop_before" ]]; then
+      if [[ "$real_desktop_before" == absent ]]; then
+        ok '真实的 ~/.dsh 未被触碰（没有 profiles/desktop）'
+      else
+        ok '真实的 ~/.dsh/profiles/desktop 存在，但本次活体过程未改动它'
+      fi
     else
-      ok '真实的 ~/.dsh 未被触碰（没有 profiles/desktop）'
+      bad '真实的 ~/.dsh/profiles/desktop 被改动了——桌面端泄漏到了正在使用的数据目录'
     fi
 
     kill "$APP_PID" 2>/dev/null

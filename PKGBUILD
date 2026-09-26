@@ -157,8 +157,8 @@ MimeType=x-scheme-handler/dsh;
 Categories=Development;
 EOF
 
-  install -Dm644 apps/desktop/resources/icon-macos.png \
-    "$pkgdir/usr/share/icons/hicolor/512x512/apps/deepseek-harness.png"
+  install -Dm644 apps/desktop/resources/icon-macos.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/deepseek-harness.svg"
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
