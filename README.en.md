@@ -16,6 +16,8 @@ that gap: it teaches the official packaging pipeline about `linux-x64` and emits
 installable artifacts. See [Validation status](#validation-status) for what has
 actually been tested.
 
+![The DeepSeek Harness desktop application](docs/screenshot.png)
+
 ## What this project produces
 
 What this project ships is **the official Electron application itself**:
@@ -121,8 +123,8 @@ Three design points worth knowing:
 
 ## Validation status
 
-**There is exactly one tested environment so far.** Both tables below are kept up to date
-as reports come in — please tell us how it goes in
+**There is only a single tested environment so far, and we intend to widen that coverage.**
+Both tables below are kept up to date as reports come in — please tell us how it goes in
 [Issues](https://github.com/ffyfox/dsh-desktop-linux/issues), whether it works or not.
 
 ### Environment

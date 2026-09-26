@@ -12,6 +12,8 @@ AppImage / deb / rpm / Arch 包。
 release target."*）。本项目补的就是这一块：让官方打包流水线认得 `linux-x64` 并产出安装包。
 当前验证范围见[验证状态](#验证状态)。
 
+![DeepSeek Harness 桌面端界面](docs/screenshot.png)
+
 ## 项目产物
 
 本项目的产物是**官方 Electron 应用本身**：
@@ -101,7 +103,7 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
 
 ## 验证状态
 
-**目前只有一个实测环境。** 下面两张表随反馈更新——欢迎在
+**目前只有单一实测环境，后续会尽可能拓展测试范围。** 下面两张表随反馈更新——欢迎在
 [Issues](https://github.com/ffyfox/dsh-desktop-linux/issues) 报告你的结果，能用和不能用
 都欢迎。
 
