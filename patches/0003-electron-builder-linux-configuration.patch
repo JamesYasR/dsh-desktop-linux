@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index bab440e..c97e5b1 100644
+index bab440e..39da0ba 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -22,7 +22,8 @@ import {
@@ -60,9 +60,15 @@ index bab440e..c97e5b1 100644
      electronDist: buildPaths.electron,
      electronFuses: { runAsNode: true },
      beforeBuild: async () => {
-@@ -230,8 +243,32 @@ export function createElectronBuilderConfig(
+@@ -229,9 +242,38 @@ export function createElectronBuilderConfig(
+       target: ['nsis'],
      },
      linux: {
++      // Linux shares macOS's artwork. The SVG rather than the PNG: a single PNG file is installed
++      // as-is at its own pixel size, which put the icon at hicolor/1024x1024/apps — a directory
++      // several distributions' hicolor index.theme does not declare, leaving it unresolvable. SVG
++      // installs to hicolor/scalable/apps, which every hicolor index.theme declares.
++      icon: fileURLToPath(new URL('../resources/icon-macos.svg', import.meta.url)),
        category: 'Development',
 -      target: ['AppImage'],
 +      // electron-builder otherwise derives the command from the scoped package name.
