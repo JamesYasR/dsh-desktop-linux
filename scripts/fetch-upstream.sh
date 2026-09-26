@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 # clone + checkout 上游 monorepo 到 ./upstream
 #
-#   ./scripts/fetch-upstream.sh              # master, --depth 1
+#   ./scripts/fetch-upstream.sh              # PKGBUILD 里的 _tag，--depth 1
+#   ./scripts/fetch-upstream.sh master       # 指定分支
 #   ./scripts/fetch-upstream.sh v0.1.7-rc.2  # 指定 tag
 #   REFRESH=1 ./scripts/fetch-upstream.sh    # 已存在则重新拉取
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/deepseek-ai/deepseek-harness.git}"
-REF="${1:-master}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$ROOT/upstream"
+
+# patches/ 里每个 diff 都是相对 PKGBUILD 里 _tag 那个 commit 的，对着 master 打补丁会直接
+# 失败。默认取 _tag 而不是 master，与 CI 用同一个真源，不在这里再写死一遍。
+if [[ $# -gt 0 ]]; then
+  REF="$1"
+else
+  REF="$(bash -c 'source "$1"; printf %s "${_tag:-}"' _ "$ROOT/PKGBUILD" 2>/dev/null || true)"
+  if [[ -z "$REF" ]]; then
+    echo "从 PKGBUILD 读不到 _tag；请显式传入 ref，例如：$0 master" >&2
+    exit 1
+  fi
+fi
 
 if [[ -d "$DEST/.git" ]]; then
   if [[ "${REFRESH:-0}" == "1" ]]; then
