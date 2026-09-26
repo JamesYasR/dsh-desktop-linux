@@ -6,11 +6,11 @@
 # 本目录里的 *.patch 是补丁系列（见 patches/README.md）。它们必须平铺在 PKGBUILD 旁边：
 # makepkg 只在 PKGBUILD 所在目录里按 basename 找本地 source，放进 patches/ 子目录会直接报
 # "<file> was not found in the build directory and is not a URL"（实测）。用
-# scripts/aur-dir.sh 从仓库根目录生成这个平铺目录。
+# scripts/pkgbuild-dir.sh 从仓库根目录生成这个平铺目录。
 #
 # 注意：namcap 的 invalidstartdir 规则会连注释一起扫，所以上面刻意用「PKGBUILD 所在目录」
 # 而不是 makepkg 那个起始目录变量名——写了字面量就会被报成 "File referenced in ..."，
-# 让 namcap 出假阳性。精确写法见 scripts/aur-dir.sh 的注释。
+# 让 namcap 出假阳性。精确写法见 scripts/pkgbuild-dir.sh 的注释。
 #
 # 硬性前提：pnpm >= 11。仓库声明 packageManager: pnpm@11.7.0，pnpm 11 会自己切到该版本；
 # pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。

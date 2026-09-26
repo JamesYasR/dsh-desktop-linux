@@ -122,7 +122,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Arch 包（AUR 交付物）单独一个 job：跑在 archlinux 容器里，与上面的 electron-builder
+  # Arch 包（PKGBUILD）单独一个 job：跑在 archlinux 容器里，与上面的 electron-builder
   # 流水线无关。PKGBUILD 直接吃上游 release 源码包，不依赖 ./upstream 检出。
   arch:
     runs-on: ubuntu-latest
@@ -171,11 +171,11 @@ jobs:
             exit 1
           fi
 
-      - name: 摊平成 AUR 目录
-        run: runuser -u builder -- ./scripts/aur-dir.sh
+      - name: 摊平成 PKGBUILD 目录
+        run: runuser -u builder -- ./scripts/pkgbuild-dir.sh
 
       - name: makepkg
-        working-directory: aur
+        working-directory: pkgbuild
         run: runuser -u builder -- makepkg -C --nodeps --nocheck
 
       # 包级别 namcap 对「自带完整运行时、装进 /opt」的应用必然报 error，没有一条是 PKGBUILD
@@ -188,7 +188,7 @@ jobs:
       # 只打印 error tag 和计数：warning 有四千多条（全是上游预编译二进制的 FULL RELRO）。
       - name: namcap 包（仅报告）
         run: |
-          namcap aur/*.pkg.tar.zst > /tmp/namcap-package.txt 2>&1 || true
+          namcap pkgbuild/*.pkg.tar.zst > /tmp/namcap-package.txt 2>&1 || true
           echo "namcap 包级别：$(grep -c ' E: ' /tmp/namcap-package.txt || true) 条 error tag，$(grep -c ' W: ' /tmp/namcap-package.txt || true) 条 warning tag"
           grep ' E: ' /tmp/namcap-package.txt | cut -c1-160 || true
 
@@ -196,8 +196,7 @@ jobs:
         with:
           name: deepseek-harness-desktop-arch
           path: |
-            aur/*.pkg.tar.zst
-            aur/.SRCINFO
+            pkgbuild/*.pkg.tar.zst
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14

@@ -36,7 +36,7 @@ workspace build, then package with electron-builder.
 | Any | AppImage | Download from [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases), `chmod +x`, run it |
 | Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
 | Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
-| Arch Linux | AUR | `yay -S deepseek-harness-desktop` (or `paru`) |
+| Arch Linux | PKGBUILD | Shipped in the repo, built locally with `makepkg` (**not published to the AUR**) — see [Arch package](#arch-package) |
 
 Artifacts are **unsigned** builds (the file name carries `-unsigned`). Once
 installed, `dsh://` links are handed to it.
@@ -82,13 +82,15 @@ The PKGBUILD consumes upstream's release tarball and does not depend on the
 `./upstream` checkout:
 
 ```bash
-./scripts/aur-dir.sh     # flatten into ./aur and generate .SRCINFO
-cd aur && makepkg -si
+./scripts/pkgbuild-dir.sh     # flatten into ./pkgbuild
+cd pkgbuild && makepkg -si
 ```
 
-`aur-dir.sh` is not optional sugar: **makepkg resolves local sources by basename
+`pkgbuild-dir.sh` is not optional sugar: **makepkg resolves local sources by basename
 inside the PKGBUILD's own directory**, so the PKGBUILD and the patches must sit
-flat together. The contents of `./aur` are exactly what you would push to the AUR.
+flat together. `./pkgbuild` is exactly the shape makepkg can consume.
+
+This project is **not published to the AUR**; the PKGBUILD is for local builds only.
 
 The Arch package installs the unpacked tree into `/opt/deepseek-harness-desktop`
 and symlinks `/usr/bin/deepseek-harness` — on Arch there is no need to wrap it in

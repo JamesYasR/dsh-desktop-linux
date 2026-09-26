@@ -31,7 +31,7 @@ release target."*）。本项目补的就是这一块：让官方打包流水线
 | 通用 | AppImage | 从 [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases) 下载，`chmod +x` 后直接运行 |
 | Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
 | Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
-| Arch Linux | AUR | `yay -S deepseek-harness-desktop`（或 `paru`） |
+| Arch Linux | PKGBUILD | 仓库自带，本地 `makepkg` 构建（**未发布到 AUR**），见 [Arch 包](#arch-包) |
 
 产物是 **unsigned** 构建（文件名里带 `-unsigned`）。安装后 `dsh://` 链接会交给它处理。
 
@@ -70,12 +70,14 @@ pnpm 9 会在 `pnpm install` 报 `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`。
 PKGBUILD 直接吃上游的 release 源码包，不依赖 `./upstream` 检出：
 
 ```bash
-./scripts/aur-dir.sh     # 摊平成 ./aur，并生成 .SRCINFO
-cd aur && makepkg -si
+./scripts/pkgbuild-dir.sh     # 摊平成 ./pkgbuild
+cd pkgbuild && makepkg -si
 ```
 
-`aur-dir.sh` 不是可有可无的糖：**makepkg 只在 PKGBUILD 所在目录里按 basename 找本地 source**，
-所以 PKGBUILD 与补丁必须平铺在一起。`./aur` 里的内容就是可以直接提交给 AUR 的形态。
+`pkgbuild-dir.sh` 不是可有可无的糖：**makepkg 只在 PKGBUILD 所在目录里按 basename 找本地 source**，
+所以 PKGBUILD 与补丁必须平铺在一起。`./pkgbuild` 里的内容就是 makepkg 能直接吃的形态。
+
+本项目**不发布到 AUR**，PKGBUILD 只用于本地构建。
 
 Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/deepseek-harness` 是符号链接——
 Arch 上不需要再套一层 AppImage/deb/rpm。
