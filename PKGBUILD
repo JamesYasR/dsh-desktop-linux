@@ -158,7 +158,7 @@ Categories=Development;
 EOF
 
   install -Dm644 apps/desktop/resources/icon-macos.png \
-    "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/deepseek-harness.png"
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/deepseek-harness.png"
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
