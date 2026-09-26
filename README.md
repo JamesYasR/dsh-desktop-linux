@@ -2,7 +2,7 @@
 
 **中文** | [English](README.en.md)
 
-> 独立社区项目。**不是** DeepSeek 官方产品，与 DeepSeek 无隶属关系。
+> 本项目为独立社区项目。**不是** DeepSeek 官方产品，与 DeepSeek 无隶属关系。
 
 把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 官方桌面端
 （`apps/desktop` 的 Electron 应用）的**打包流水线**移植到 Linux，产出
@@ -10,11 +10,11 @@ AppImage / deb / rpm / Arch 包。
 
 上游目前明确不支持 Linux（`apps/desktop/README.md`：*"Linux is not a supported Desktop
 release target."*）。本项目补的就是这一块：让官方打包流水线认得 `linux-x64` 并产出安装包。
+当前验证范围见[验证状态](#验证状态)。
 
-## 和「套壳版」的区别
+## 项目产物
 
-生态里已有的 Linux 桌面端大多走另一条路：启动 `dsh web`，再套一个自己的窗口。
-本项目的产物是**官方那个 Electron 应用本身**——它有自己的一套东西，没法靠套壳复现：
+本项目的产物是**官方 Electron 应用本身**：
 
 - 渲染走自己的 `dsh-app://` 协议，而不是去连一个本地 Web 服务；
 - 内置 Node / pnpm / Python 运行时，不依赖系统 Node；
@@ -26,16 +26,16 @@ release target."*）。本项目补的就是这一块：让官方打包流水线
 
 | 发行版 | 格式 | 安装方式 |
 |---|---|---|
-| Arch Linux | AUR | `yay -S deepseek-harness-desktop`（或 `paru`） |
 | 通用 | AppImage | 从 [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases) 下载，`chmod +x` 后直接运行 |
 | Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
 | Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
+| Arch Linux | AUR | `yay -S deepseek-harness-desktop`（或 `paru`） |
 
 产物是 **unsigned** 构建（文件名里带 `-unsigned`）。安装后 `dsh://` 链接会交给它处理。
 
 ## 从源码构建
 
-依赖：Node 22.19+ 或 24+、**pnpm 11**、git、能访问 GitHub 的网络。
+依赖：Node 22.19+ 或 24+、**pnpm 11**、git。
 打 rpm 还需要系统有 `rpmbuild`（Arch 上是 `rpm-tools`）。
 
 ```bash
@@ -54,26 +54,9 @@ cd dsh-desktop-linux
 
 产物落在 `upstream/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts/`。
 
-### 打 deb / rpm 前要填 `.env.linux`
-
-Linux 的发布设置从 `apps/desktop/.env.linux` 读（git-ignored；`build.sh` 首次运行会从
-`.env.linux.example` 生成）：
-
-| 设置 | 何时需要 | 说明 |
-|---|---|---|
-| `DSH_DESKTOP_APP_ID` | 总是 | 例如 `com.deepseek.harness` |
-| `DSH_DESKTOP_LINUX_MAINTAINER` | deb / rpm | 写进 Debian 的 `Maintainer:`、rpm 的 `Packager:`；格式必须是 `名字 <邮箱>`，指的是**打这个包的人** |
-| `DSH_DESKTOP_LINUX_HOMEPAGE` | deb / rpm | 写进 Debian 的 `Homepage:` / rpm 的 `URL:`，按惯例指**上游项目**主页 |
-
-两个容易踩的坑：
-
-- **这三个设置只能从文件读。** 上游会把 `DSH_DESKTOP_APP_ID` 与 `DSH_DESKTOP_LINUX_*`
-  从进程环境里整个滤掉再合并文件，所以 `DSH_DESKTOP_LINUX_MAINTAINER=… ./scripts/build.sh --deb`
-  是**静默无效**的。
-- **反过来，要出哪些格式只能从环境传**：`DSH_DESKTOP_TARGET_FORMATS`。它是一次构建的选择器，
-  写进 `.env.linux` 会被拒收。（`build.sh` 的 `--deb` / `--rpm` / `--all` 已经替你设好了。）
-
-两者都在打包最前面的 `configuration` 阶段校验，不会等 fpm 跑到一半才报错。
+deb / rpm 的 `Maintainer:` / `Homepage:` 来自 `upstream/apps/desktop/.env.linux`。`build.sh`
+首次运行就从仓库里的 `.env.linux.example` 生成，值已经填好。要换成你自己的，改那个文件即可：
+**同名环境变量会被上游整个滤掉**，`DSH_DESKTOP_LINUX_MAINTAINER=… build.sh --deb` 静默无效。
 
 ### 硬性前提
 
@@ -116,6 +99,32 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
   不支持才退回 setuid `chrome-sandbox`。AppImage 交给 AppRun 自己探测，deb / rpm / Arch 包在
   postinst 里做同样的判断。
 
+## 验证状态
+
+**目前只有一个实测环境。** 下面两张表随反馈更新——欢迎在
+[Issues](https://github.com/ffyfox/dsh-desktop-linux/issues) 报告你的结果，能用和不能用
+都欢迎。
+
+### 环境
+
+| 环境 | 状态 |
+|---|---|
+| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **已实测**，正常 |
+| X11（任意发行版 / 桌面环境） | 未验证 |
+| 其他桌面环境（GNOME、Hyprland 等） | 未验证 |
+| Debian / Ubuntu、Fedora / RHEL | 未验证 |
+| aarch64 | 未构建、未验证 |
+
+### 产物
+
+| 产物 | 状态 |
+|---|---|
+| Arch 包 | **已实测**：`makepkg` → `pacman -U` 安装 → 启动、沙箱、卸载 |
+| AppImage | **已实测**：构建并起窗口 |
+| `linux-unpacked` | **已实测**：`verify.sh --runtime` 活体矩阵 |
+| deb | 只核对过 control 字段，未在 Debian / Ubuntu 上安装运行 |
+| rpm | 只核对过 `rpm -qip` 字段，未在 Fedora / RHEL 上安装运行 |
+
 ## 已知限制
 
 - **没有自动更新。** 上游的强制更新策略通道只认 `desktop-win` / `desktop-mac` 客户端身份，
@@ -131,4 +140,4 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
 
 ## 许可
 
-MIT。上游 `deepseek-harness` 也是 MIT。本仓库只含打包脚本、补丁与包定义，不含上游源码。
+MIT

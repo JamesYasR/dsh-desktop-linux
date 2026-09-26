@@ -13,13 +13,12 @@ AppImage / deb / rpm / Arch packages.
 Upstream explicitly does not support Linux today (`apps/desktop/README.md`:
 *"Linux is not a supported Desktop release target."*). This project fills exactly
 that gap: it teaches the official packaging pipeline about `linux-x64` and emits
-installable artifacts.
+installable artifacts. See [Validation status](#validation-status) for what has
+actually been tested.
 
-## How this differs from a "wrapper"
+## What this project produces
 
-Most existing Linux desktops in the ecosystem take another route: launch `dsh web`
-and wrap it in a window of their own. What this project ships is **the official
-Electron application itself** — which has things a wrapper cannot reproduce:
+What this project ships is **the official Electron application itself**:
 
 - the renderer loads over its own `dsh-app://` protocol rather than connecting to a local web server;
 - it carries its own Node / pnpm / Python runtime and does not use the system Node;
@@ -32,17 +31,17 @@ workspace build, then package with electron-builder.
 
 | Distribution | Format | How |
 |---|---|---|
-| Arch Linux | AUR | `yay -S deepseek-harness-desktop` (or `paru`) |
 | Any | AppImage | Download from [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases), `chmod +x`, run it |
 | Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
 | Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
+| Arch Linux | AUR | `yay -S deepseek-harness-desktop` (or `paru`) |
 
 Artifacts are **unsigned** builds (the file name carries `-unsigned`). Once
 installed, `dsh://` links are handed to it.
 
 ## Building from source
 
-Requirements: Node 22.19+ or 24+, **pnpm 11**, git, and network access to GitHub.
+Requirements: Node 22.19+ or 24+, **pnpm 11**, and git.
 Building the rpm additionally needs `rpmbuild` on the system (`rpm-tools` on Arch).
 
 ```bash
@@ -64,29 +63,10 @@ faster and easier to debug.
 Artifacts land in
 `upstream/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts/`.
 
-### Fill in `.env.linux` before building deb / rpm
-
-Linux release settings are read from `apps/desktop/.env.linux` (git-ignored;
-`build.sh` creates it from `.env.linux.example` on first run):
-
-| Setting | When | Notes |
-|---|---|---|
-| `DSH_DESKTOP_APP_ID` | always | e.g. `com.deepseek.harness` |
-| `DSH_DESKTOP_LINUX_MAINTAINER` | deb / rpm | Becomes Debian's `Maintainer:` and rpm's `Packager:`. Must be `Name <email>` and refers to **whoever built the package** |
-| `DSH_DESKTOP_LINUX_HOMEPAGE` | deb / rpm | Becomes Debian's `Homepage:` and rpm's `URL:`. By convention it points at the **upstream project** |
-
-Two easy traps:
-
-- **These three settings can only come from the file.** Upstream filters
-  `DSH_DESKTOP_APP_ID` and every `DSH_DESKTOP_LINUX_*` out of the process
-  environment before merging the file, so
-  `DSH_DESKTOP_LINUX_MAINTAINER=… ./scripts/build.sh --deb` is **silently ignored**.
-- **Conversely, which formats to build can only come from the environment**:
-  `DSH_DESKTOP_TARGET_FORMATS`. It is a per-build selector and is rejected if
-  written into `.env.linux`. (`build.sh`'s `--deb` / `--rpm` / `--all` already set it.)
-
-Both are validated in the `configuration` stage at the very front of packaging,
-so you find out before fpm is halfway through.
+The deb / rpm `Maintainer:` / `Homepage:` come from `upstream/apps/desktop/.env.linux`.
+`build.sh` creates it on first run from the repo's `.env.linux.example`, values already filled in.
+To change them, edit that file: **the same-named environment variables are filtered out by
+upstream**, so `DSH_DESKTOP_LINUX_MAINTAINER=… build.sh --deb` is silently ignored.
 
 ### Hard requirement
 
@@ -139,6 +119,32 @@ Three design points worth knowing:
   leaves this to AppRun's own probe, and the deb / rpm / Arch packages make the
   same decision in their postinst.
 
+## Validation status
+
+**There is exactly one tested environment so far.** Both tables below are kept up to date
+as reports come in — please tell us how it goes in
+[Issues](https://github.com/ffyfox/dsh-desktop-linux/issues), whether it works or not.
+
+### Environment
+
+| Environment | Status |
+|---|---|
+| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **Tested**, works |
+| X11 (any distribution / desktop) | Not tested |
+| Other desktops (GNOME, Hyprland, …) | Not tested |
+| Debian / Ubuntu, Fedora / RHEL | Not tested |
+| aarch64 | Not built, not tested |
+
+### Artifacts
+
+| Artifact | Status |
+|---|---|
+| Arch package | **Tested**: `makepkg` → `pacman -U` → launch, sandbox, uninstall |
+| AppImage | **Tested**: built and launched |
+| `linux-unpacked` | **Tested**: `verify.sh --runtime` live matrix |
+| deb | Control fields checked only — never installed or run on Debian / Ubuntu |
+| rpm | `rpm -qip` fields checked only — never installed or run on Fedora / RHEL |
+
 ## Known limitations
 
 - **No auto-update.** Upstream's mandatory-update policy channel only recognises
@@ -158,5 +164,4 @@ Three design points worth knowing:
 
 ## License
 
-MIT. Upstream `deepseek-harness` is MIT as well. This repository contains only
-packaging scripts, patches, and package definitions — no upstream source.
+MIT
