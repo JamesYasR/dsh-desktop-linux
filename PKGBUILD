@@ -17,7 +17,7 @@
 
 pkgname=dsh-desktop-linux
 pkgver=0.1.7rc2
-pkgrel=1
+pkgrel=2
 _tag='dsh-v0.1.7-rc.2'
 _commit='477b4f420553e8a52c2fbccc464d7561b239c443'
 # GitHub 源码包的顶层目录名 = <repo>-<tag>，tag 自带的 "v" 不剥（实测 dsh-v0.1.7-rc.2）
@@ -59,7 +59,8 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         '0009-desktop-packaging-host-runtime.patch'
         '0010-desktop-linux-policy-opt-out.patch'
         '0011-desktop-linux-package-metadata.patch'
-        '0012-desktop-build-commit-release-archive.patch')
+        '0012-desktop-build-commit-release-archive.patch'
+        '0014-electron-version-tray-fix.patch')
 sha256sums=('761df167eaccc337bcee864579fd578ecb0f3cb5dbc7b1d36761508faaec455a'
             '67a38b25575b2e4f3075eb0a516636db22795895eacf5ae9b6f3c13693a22f23'
             '9bb07dc990ed6855977a5f84e93aab918e2fc54fdb0a904ca02bb82843b8fabd'
@@ -72,7 +73,8 @@ sha256sums=('761df167eaccc337bcee864579fd578ecb0f3cb5dbc7b1d36761508faaec455a'
             '62fca9bb192ccc7114f58b14245701a5b765cb16e46ec730c59e73570b87dbfd'
             '062567a5bcd5f4d8e63368a98927055358318f428c88fb851846d64fb859db8e'
             'a3ff4a524a4ebe28551797bd36dab7b7139516e668462f054e616e8a521e3e8f'
-            'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715')
+            'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715'
+            '56fd75ad67bab6629d83618d09ff29c3aaf0d11f9adb8ff6b887cb71cf0091cb')
 
 prepare() {
   cd "$srcdir"
