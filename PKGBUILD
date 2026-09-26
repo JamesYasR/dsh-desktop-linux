@@ -28,10 +28,13 @@ arch=('x86_64')
 url='https://github.com/ffyfox/dsh-desktop-linux'
 license=('MIT')
 # 上游 deb/rpm 的 control 里声明的运行时依赖，换成 Arch 的包名，再加上 ldd 显示而
-# Debian 那边由传递依赖带来的 alsa-lib / dbus。剩下的（cairo、pango、libx11、
-# libcups、at-spi2-core、libepoxy、wayland …）都由 gtk3 拉进来。
+# Debian 那边由传递依赖带来的 alsa-lib / dbus。剩下的（cairo、pango、libx11、libcups、
+# libgbm、libxkbcommon、at-spi2-core、libepoxy、wayland …）都由 gtk3 拉进来——实测
+# `pactree -u gtk3` 含 mesa，包级别 namcap 对这些一条也没报。
+# libxcrypt-compat 是唯一落在 gtk3 闭包外的：捆绑 Python 里那个已废弃的 _crypt 模块链接
+# libcrypt.so.1，而 glibc 2.38 之后这个 soname 由 libxcrypt-compat 提供。namcap 会报它。
 depends=('gtk3' 'nss' 'libnotify' 'libxss' 'libxtst' 'xdg-utils' 'at-spi2-core'
-         'libsecret' 'alsa-lib' 'dbus')
+         'libsecret' 'alsa-lib' 'dbus' 'libxcrypt-compat')
 # python 是 node-gyp 的后备：正常情况下 node-pty / sharp / koffi / native-system 都命中预编译
 # 产物（实测这次构建没有编译任何东西），但预编译缺失时 pnpm install 会退回源码编译。
 # 其余构建工具（patch、bsdtar、make、gcc）由 makepkg 假定存在的 base-devel 提供。

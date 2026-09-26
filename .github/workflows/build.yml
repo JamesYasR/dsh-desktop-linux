@@ -147,20 +147,16 @@ jobs:
           useradd -m builder
           chown -R builder:builder "$GITHUB_WORKSPACE"
 
-      # makepkg --nodeps 会跳过依赖检查（否则为了打个包得把整棵 gtk3 装进容器），
-      # 但那样包名拼错就没人发现了。pacman -Si 只查元数据，不下载不安装。
-      - name: 校验 depends 的包名都存在
+      # depends 里那套运行时库必须在场：上游 prepare-runtime.ts 会**真的执行 Electron** 去读
+      # 它自带的 Node 版本（electron -p process.versions.node），缺一个就是动态链接器直接报
+      # "error while loading shared libraries"（实测先在 libnspr4.so 上挂）。所以原先靠
+      # makepkg --nodeps 跳过依赖检查是错的——那套「为了打个包不必装 gtk3」的假设不成立。
+      # 装完 depends 后 --nodeps 也不再需要，依赖检查恢复成真检查：包名写错会被 pacman 拒掉。
+      - name: 装 depends（构建期要真的跑 Electron）
         run: |
-          rc=0
-          while read -r name; do
-            if pacman -Si "$name" >/dev/null 2>&1; then
-              echo "  OK   $name"
-            else
-              echo "  MISS $name（depends 里的包名在仓库里不存在）" >&2
-              rc=1
-            fi
-          done < <(bash -c 'source ./PKGBUILD; printf "%s\n" "${depends[@]}"')
-          exit "$rc"
+          mapfile -t deps < <(bash -c 'source ./PKGBUILD; printf "%s\n" "${depends[@]}"')
+          printf 'depends: %s\n' "${deps[*]}"
+          pacman -S --noconfirm --needed "${deps[@]}"
 
       - name: namcap PKGBUILD
         run: |
@@ -176,15 +172,18 @@ jobs:
 
       - name: makepkg
         working-directory: pkgbuild
-        run: runuser -u builder -- makepkg -C --nodeps --nocheck
+        run: runuser -u builder -- makepkg -C --nocheck
 
-      # 包级别 namcap 对「自带完整运行时、装进 /opt」的应用必然报 error，没有一条是 PKGBUILD
-      # 的缺陷，所以只报告不当门禁：
+      # 包级别 namcap 对「自带完整运行时、装进 /opt」的应用必然报 error，多数不是 PKGBUILD
+      # 的缺陷，所以不当门禁：
       #   - "ELF files outside of a valid path ('opt/')"：namcap 自己把 opt/ 归到
       #     questionable_dirs（Namcap/rules/elffiles.py），而 Arch 允许自包含应用装 /opt。
       #   - "Insecure RPATH/RUNPATH"：来自上游预编译的 sherpa-onnx / primary-runtime 二进制。
-      #   - "Dependency ... detected and not included"：包里带着完整的 python/node/pnpm
-      #     运行时，namcap 的依赖探测是按「用系统库」的前提写的。
+      #   - "Dependency python-X detected and not included (python modules [...])"：包里带着完整的
+      #     python/node/pnpm 运行时，namcap 的 python 依赖探测是按「用系统库」的前提写的，
+      #     这几条全是假阳性。
+      #   - 但 **"detected and not included (libraries [...])" 那类不是假阳性**：它是 ELF 库级别
+      #     的真缺口（libxcrypt-compat / libcrypt.so.1 就是这么找出来的），值得人眼扫一眼。
       # 只打印 error tag 和计数：warning 有四千多条（全是上游预编译二进制的 FULL RELRO）。
       - name: namcap 包（仅报告）
         run: |
