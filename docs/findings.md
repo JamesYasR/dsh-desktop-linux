@@ -836,6 +836,139 @@ PKGBUILD 头部注释里那个变量名的**字面量**——`invalidstartdir` �
 PKGBUILD 里现在留了一行注释说明，免得以后有人「顺手」把变量名写回去。剩下那 2 条 warning 是
 `uses internal makepkg 'msg2' / 'error' subroutine`，属于风格提示，没改。
 
+## 2026-09-26 · 阶段 5 · 验证矩阵 —— **通过**
+
+BRIEF 阶段 5 列了五项。这一轮把它们从「看着像对」变成可复现的检查，写进了
+`scripts/verify.sh`：静态部分（19 项）不启动应用、CI 能跑；加 `--runtime` 会额外拉起
+`linux-unpacked`，用 DevTools 协议读渲染文档，跑完自动收掉。本机实测
+`./scripts/verify.sh --runtime`：**29 通过 / 0 失败 / 0 跳过**。
+
+| BRIEF 阶段 5 的检查 | 结果 | 证据 |
+|---|---|---|
+| 窗口起得来 | ✓ | 标题 `DeepSeek Harness`、菜单 `Application \| Edit`、欢迎页 `Sign in` / `Add API Key` |
+| `dsh-app://` 协议加载 UI 正常 | ✓ | CDP 目标 `dsh-app://app/`，节点数稳定在 445，正文含 `New Session` / `Plugins` / `Workspaces` |
+| 与 CLI **共享** `~/.dsh`（会话 / 设置 / 凭据） | ✓ | 同一根下：会话 `<根>/sessions/<工作区>/session-*.v4.jsonl.zstd`、凭据 `<根>/.credentials.yaml`、身份 `<根>/.anonymous-user-id`——都在**根上**，不在任何 profile 里 |
+| **独占** `profiles/desktop`，不污染 `web` profile | ✓ | CLI 拒绝 `--profile desktop`（exit 1）；CLI 在同一根上跑完 `--profile web --dump-config` 后，`profiles/desktop` 四个文件逐字节未变；`profiles/web` 的哨兵未被动过 |
+| 不跟 3080 上的服务打架 | ✓ | 19387 与 3080 是两个进程（08:01 / 07:06 启动），都只监听 `127.0.0.1`，3080 全程可用 |
+
+### 「UI 真的加载了」怎么测，而不是「进程还在」
+
+`ss` 只说明有东西在监听；`dsh-app://` 是 Electron 自定义协议，**目标存在也不等于文档有内容**
+（空白文档同样是个目标）。所以用 `--remote-debugging-port` 连 DevTools 协议，直接对文档求值：
+
+```
+$ curl -s --noproxy '*' http://127.0.0.1:9222/json/list      # → page | DeepSeek Harness | dsh-app://app/
+```
+
+`Runtime.evaluate` 读到的是：
+
+| 目标 | href | 节点数 | 正文开头 |
+|---|---|---|---|
+| 欢迎窗 | `file://…/resources/app/renderer/welcome.html` | 49 | `Welcome to DeepSeek Harness … Sign in Add API Key` |
+| 主窗 | `dsh-app://app/` | 445 | `New Session Ctrl N Plugins Workspaces Default workspace …` |
+
+**一个时序坑**：19387 开始监听时 renderer 还在加载，此时取样会拿到 152 个节点这样的中间态。
+`verify.sh` 里等的是「连续两次取样节点数相同」再取值，稳定后是 445。最初我只等
+`>100`，于是脚本报的是 152——数字虽然过了阈值，但它不是稳定态。
+
+### 共享根与 profile 独占：交叉测过
+
+两边都调 `resolveDshHome()`（`$DSH_HOME` → `~/.dsh`），桌面端把它拼成
+`<根>/profiles/desktop`（`apps/desktop/src/paths.ts:19`）。实测而不是只读代码：
+
+- 给桌面端 `DSH_HOME=/tmp/…`，它把 `profiles/desktop`、`sessions/`、`storages/`、
+  `.credentials.yaml`、`.anonymous-user-id` **全部建在那个根下**；
+- 再把**打包产物自带的 CLI** 指向同一个根跑 `--profile web --dump-config`（输出 1246 行组合树，
+  exit 0），`profiles/desktop` 的四个文件 sha256 逐一不变；
+- 两个 profile 的脚手架结构完全一样：`cordis.yml` + `cordis.patch.yml` + `package.json` +
+  `pnpm-workspace.yaml`。
+
+**独占是上游设计，不是我们的约定**：`apps/cli/src/args.ts:83` 的 `rejectElectronProfile()`
+对 `profile.toLowerCase() === 'desktop'` 直接报错，所以 `dsh --profile Desktop` 也一样被拒——
+CLI 和 Electron 不可能写同一个 profile。`--runtime` 里也顺带断言了真实的 `~/.dsh` 没有出现
+`profiles/desktop`。
+
+### `dsh://` URL scheme：三种产物一致，但注册链路要 `update-desktop-database`
+
+`electron-builder-config.mjs` 里声明了 `protocols: [{ schemes: ['dsh'] }]`，产物里的
+`.desktop` 都带 `MimeType=x-scheme-handler/dsh;`：
+
+| 产物 | Exec | MimeType | StartupWMClass |
+|---|---|---|---|
+| AppImage | `AppRun %U` | ✓ | `deepseek-harness` |
+| deb | `"/opt/DeepSeek Harness/deepseek-harness" %U` | ✓ | `deepseek-harness` |
+| PKGBUILD | `"/opt/deepseek-harness-desktop/deepseek-harness" %U` | ✓ | `deepseek-harness` |
+
+PKGBUILD 那份是照抄 deb 里 electron-builder 生成的那份，只换前缀——逐字比对过，包括
+`StartupWMClass`（Electron 从 `desktopName` 推导窗口 app_id，两者必须一致）。
+
+`MimeType` 只让这个条目**候选**，要进 `mimeinfo.cache` 才会被桌面环境看见，而那是
+`update-desktop-database` 的活。上游 deb 的 postinst **显式调用**它；我们的 `.install` 没有。
+**但这里不需要改**：Arch 的 `desktop-file-utils` 提供 pacman hook
+（`/usr/share/libalpm/hooks/update-desktop-database.hook`，`PostTransaction` 触发），
+而 `desktop-file-utils` 被 `gtk3` `gtk4` `mpv` `steam` 依赖——桌面系统上必然存在。
+在 `.install` 里再调一次既冗余也违反 Arch 的打包惯例。
+
+**我差点记下一条错的结论。** 在隔离的 `XDG_DATA_DIRS` 里测注册时，`gio mime
+x-scheme-handler/dsh` 报「没有默认应用」，我一度以为 `.desktop` 有问题。做了变量隔离才看清：
+
+| 变量 | Exec | GLib 是否认出 |
+|---|---|---|
+| a | `"/opt/deepseek-harness-desktop/deepseek-harness" %U`（包没装，路径不存在） | ✗ |
+| b | `/bin/true %U` | ✓ |
+| c | `/nonexistent/path %U` | ✗ |
+
+**GLib 会隐藏 Exec 目标不存在的桌面项**。把同一份 `.desktop` 的 Exec 换成真实存在的二进制后，
+`gio mime x-scheme-handler/dsh` 立刻报 `Default application … deepseek-harness.desktop`。
+所以那个「没注册」纯粹是「包没装」的假象，不是缺陷。对照组用的是同目录、同 cache 的
+`x-scheme-handler/zzztest`。
+
+### 新发现：Linux 上客户端对 Platform 自称 macOS
+
+查 `dsh://` 时顺带撞见的。`packages/credentials/deepseek-account/src/index.ts:138`：
+
+```js
+export function desktopClientHeaders(platform) {
+  if (platform === null) return {}
+  return { 'x-client-platform': platform === 'win32' ? 'desktop-win' : 'desktop-mac' }
+}
+```
+
+用**打包产物里的 built lib** 实测：`win32 → desktop-win`、`darwin → desktop-mac`、
+**`linux → desktop-mac`**、`null → web`。而 Linux 上确实会走到这里：
+
+- `apps/desktop/src/main.ts:409` 是 `process.platform === 'win32' ? 'win32' : 'darwin'`——
+  Linux 上显式传 `'darwin'`（内嵌 Platform 视图这条路径）；
+- `apps/desktop/src/main.ts:1247` 是 `process.platform as 'win32' | 'darwin'`（类型断言，
+  运行时是 `'linux'`）。但它被上一行 `if (!['win32','darwin'].includes(process.platform)) throw`
+  挡住，而这条只在 `policyConfig !== undefined` 时才可达——Linux 产物 manifest 里没有
+  `dshMandatoryUpdatePolicy`（补丁 0010），所以**这条在 Linux 上不可达**，与「Linux 不嵌入策略」一致。
+
+同一份 `auth_exchange` 请求里还有个自相矛盾：`x-client-platform: desktop-mac`，而
+`device_model` 来自 `node:os` 的 `platform()`，在 Linux 上是 `linux-x64`
+（`deepseek-account-platform/src/index.ts:572`）。
+
+这不是我们引入的缺陷，**是上游的类型联合 `'darwin' | 'win32' | null` 在 Linux 上被迫二选一的结果**。
+README 原先写「Linux 没有对应身份」不准确——准确说法是：**Linux 客户端报的是
+`desktop-mac`，一个假身份**。`verify.sh` 把这三个映射当回归断言钉住了。要不要动它属于上游决策
+（真要支持 Linux，正确做法是给联合类型加 `'linux'` 并让服务端认识 `desktop-linux`），本项目不动。
+
+### 沙箱与运行时（复测）
+
+- Host 进程的 executable 是 `resources/runtime/primary-runtime/dependencies/node/bin/node`；
+- 2 个渲染进程各自在独立 PID namespace（与主进程不同）且 `Seccomp: 2`，主进程 `Seccomp: 0`；
+- `chrome-sandbox` 保持 `0755`（内核支持非特权 user namespace，按上游 postinst 的判断不装 SUID）；
+- 19387 与 9222 都只绑 `127.0.0.1`。
+
+### 这一轮**没有**验证到的
+
+- 三种产物**装到系统后**的 `dsh://` 端到端行为（点一个 `dsh://` 链接真的拉起窗口）——
+  上面验的是 `.desktop` 内容与注册链路，没装机实测。
+- 「桌面端建的会话被 CLI 读回来」这种双向读写。验到的是：两端解析到同一个根、
+  共享根里确实有桌面端写下的会话/凭据/身份文件、且互不覆盖对方的 profile。
+- deb / rpm 装到系统后的行为（阶段 4 只对 Arch 包做过 `pacman -U` 实测）。
+- CI 的两个 job 仍然没有端到端跑过（本地没有 runner）。
+
 ## 补丁清单
 
 见 `patches/README.md`——那里是补丁清单的唯一归属地（本文件不再重复一份，之前那份已经和

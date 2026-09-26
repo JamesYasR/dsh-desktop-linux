@@ -42,8 +42,13 @@ dsh-desktop-linux/
 ./scripts/build.sh --deb                 # 只出 .deb
 ./scripts/build.sh --rpm                 # 只出 .rpm
 ./scripts/build.sh --all                 # AppImage + deb + rpm
-./scripts/verify.sh
+./scripts/verify.sh                      # 静态校验（CI 跑这个）
+./scripts/verify.sh --runtime            # 额外跑活体矩阵：起窗口、读 dsh-app:// 文档、测 CLI 互通
 ```
+
+`verify.sh` 的静态部分只看产物与打包元数据，不启动应用；`--runtime` 会真的拉起
+`linux-unpacked`，用 DevTools 协议读渲染文档，结束时自动收掉，并断言真实的 `~/.dsh`
+未被触碰。本机实测 `--runtime`：29 通过 / 0 失败。
 
 每次只出被点名的格式。整条流水线（`build:official` / `release:pack` / `prepare:*`）才是耗时大头，
 多打一种格式只多一次 fpm/AppImage 打包，所以分开跑更快，也更容易定位失败。
@@ -129,7 +134,7 @@ dev 模式（阶段 1，已验证可起窗口）：
 | 2 | 定位打包失败点，打补丁 | **完成：链路推进到 `prepare:dsh`**，卡在 sharp 段错误 |
 | 3 | 原生模块（node-pty / sharp） | **完成：Linux 上 Host 改走 primary-runtime 的真 Node**，sharp 解码正常 |
 | 4 | 产物：AppImage → deb → rpm → PKGBUILD | **完成**：三种产物 + Arch 包（PKGBUILD）全部产出并实测 |
-| 5 | 验证矩阵（协议、profile 隔离、端口） | 部分提前验证：`dsh-app://` 正常、`profiles/desktop` 隔离、19387 端口一致 |
+| 5 | 验证矩阵（协议、profile 隔离、端口） | **完成**：五项全部实测通过，`./scripts/verify.sh --runtime` 29 通过 / 0 失败 |
 | 6 | 回到上游 Discussion 汇报 | 未开始 |
 
 ## 当前状态
@@ -178,12 +183,23 @@ tag，但**没有一条是 PKGBUILD 的缺陷**（`opt/` 在 namcap 眼里只是
 python / node / pnpm 运行时、预编译二进制的 RPATH）。逐条对照见 `docs/findings.md`。CI 里前者
 当门禁，后者只报告。
 
+三种产物的 `.desktop` 都带 `MimeType=x-scheme-handler/dsh;`，所以 `dsh://` 链接能交给它：
+AppImage 那份是 `Exec=AppRun %U`（不带 `--no-sandbox`），deb 与 PKGBUILD 用安装前缀的绝对路径，
+三者的 `StartupWMClass` 都是 `deepseek-harness`（Electron 从 `desktopName` 推导窗口 app_id，
+两者必须一致）。注册进 `mimeinfo.cache` 由 `update-desktop-database` 完成——Arch 上
+`desktop-file-utils` 的 pacman hook 会自动做，`.install` 里不需要再调一次。
+
 ## 未决事项
 
-- **强制更新策略通道 Linux 不参与**：策略服务只认 `desktop-win` / `desktop-mac` 客户端身份，
-  Linux 没有对应身份，而且 Linux 产物没有更新通道。所以 Linux 版不嵌入策略、不轮询，
-  也不需要任何 `DSH_MANDATORY_UPDATE_*` 设置。若将来上游补上 Linux 身份，放开
-  `desktopPlatformEmbedsPolicy()` 即可。
+- **强制更新策略通道 Linux 不参与**：策略服务的客户端身份只有 `desktop-win` / `desktop-mac`，
+  而且 Linux 产物没有更新通道，所以 Linux 版不嵌入策略、不轮询，也不需要任何
+  `DSH_MANDATORY_UPDATE_*` 设置（`desktopPlatformEmbedsPolicy('linux') === false`，补丁 0010）。
+  措辞要准确：**不是「Linux 没有身份」，而是运行时会把 Linux 客户端报成 `desktop-mac`**——
+  `desktopClientHeaders()` 是 `platform === 'win32' ? 'desktop-win' : 'desktop-mac'`，
+  而 `main.ts:409` 在 Linux 上显式传 `'darwin'`。也就是说账号 / Platform 侧看到的是一台
+  macOS 客户端。这是上游类型联合 `'darwin' | 'win32' | null` 在 Linux 上被迫二选一的结果，
+  不是本项目引入的；要真正支持 Linux，上游得给联合类型加 `'linux'` 并让服务端认识
+  `desktop-linux`。实测记录见 `docs/findings.md` 的阶段 5 一节。
 - **AppImage 的沙箱**：electron-builder 的 legacy AppImage 工具集会在 `.desktop` 里写死
   `Exec=AppRun --no-sandbox %U`，也就是菜单启动的每一次都没有 Chromium 沙箱。已用
   `appImage: { executableArgs: [] }` 去掉这个 flag，决定权交给 AppRun 自己的
