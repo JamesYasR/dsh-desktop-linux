@@ -15,7 +15,7 @@
 # 硬性前提：pnpm >= 11。仓库声明 packageManager: pnpm@11.7.0，pnpm 11 会自己切到该版本；
 # pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
 
-pkgname=deepseek-harness-desktop
+pkgname=dsh-desktop-linux
 pkgver=0.1.7rc2
 pkgrel=1
 _tag='dsh-v0.1.7-rc.2'
@@ -36,7 +36,10 @@ depends=('gtk3' 'nss' 'libnotify' 'libxss' 'libxtst' 'xdg-utils' 'at-spi2-core'
 # 产物（实测这次构建没有编译任何东西），但预编译缺失时 pnpm install 会退回源码编译。
 # 其余构建工具（patch、bsdtar、make、gcc）由 makepkg 假定存在的 base-devel 提供。
 makedepends=('nodejs' 'pnpm' 'python')
-conflicts=('deepseek-harness-desktop-git' 'dsh-desktop-git')
+# 与 AUR 上同上游的 deepseek-harness-desktop 撞一个文件：
+# /usr/share/icons/hicolor/scalable/apps/deepseek-harness.svg。pacman 遇到同名文件会直接拒装，
+# 声明冲突让它先提示卸掉对方；本机从旧包名升上来也走这条路。
+conflicts=('deepseek-harness-desktop')
 options=('!strip' '!debug' '!emptydirs')
 install="$pkgname.install"
 
