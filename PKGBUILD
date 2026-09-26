@@ -142,7 +142,7 @@ package() {
   install -d "$pkgdir/usr/bin"
   ln -s /opt/deepseek-harness-desktop/deepseek-harness "$pkgdir/usr/bin/deepseek-harness"
 
-  # .desktop 与图标取自上游 deb/rpm 里 electron-builder 生成的那一份，只改安装前缀。
+  # .desktop 照上游 deb/rpm 里 electron-builder 生成的那一份写，只改安装前缀。
   install -d "$pkgdir/usr/share/applications"
   cat > "$pkgdir/usr/share/applications/deepseek-harness.desktop" <<'EOF'
 [Desktop Entry]
@@ -157,7 +157,7 @@ MimeType=x-scheme-handler/dsh;
 Categories=Development;
 EOF
 
-  install -Dm644 "$unpacked/resources/icon.png" \
+  install -Dm644 apps/desktop/resources/icon-macos.png \
     "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/deepseek-harness.png"
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
