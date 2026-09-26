@@ -8,10 +8,11 @@
 #
 #   ==> ERROR: 0001-....patch was not found in the build directory and is not a URL.
 #
-# 所以可构建的目录必须是 PKGBUILD + 补丁平铺在一起。仓库里保留 patches/ 是为了补丁系列
-# 本身可读（编号 + README），要构建时用这个脚本摊平。
+# 所以可构建的目录必须是 PKGBUILD + 补丁 + 本地资产平铺在一起。仓库里保留 patches/ 是为了补丁
+# 系列本身可读（编号 + README），要构建时用这个脚本摊平。
 #
-# 输出目录里的内容是完整可构建的：PKGBUILD、.install、12 个补丁。
+# 输出目录里的内容是完整可构建的：PKGBUILD、.install、每个补丁，以及补丁装不下的本地资产
+# （assets/tray-linux.png，见 PKGBUILD 的 source 说明）。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,7 +44,15 @@ fi
 # 平铺：makepkg 按 basename 找，子目录不认。
 cp "${patches[@]}" "$OUT/"
 
-echo "==> 已摊平 ${#patches[@]} 个补丁到 $OUT"
+# 补丁装不下的本地资产同样按 basename 摊平：assets/ 下的 PNG 全部拷过去，实际用哪一个是
+# PKGBUILD 的 source= 说了算（scripts/apply-patches.sh 的 ASSETS 是同一批资产的另一条路径）。
+shopt -s nullglob
+assets=("$ROOT"/assets/*.png)
+if (( ${#assets[@]} > 0 )); then
+  cp "${assets[@]}" "$OUT/"
+fi
+
+echo "==> 已摊平 ${#patches[@]} 个补丁、${#assets[@]} 个本地资产到 $OUT"
 
 cat <<EOF
 

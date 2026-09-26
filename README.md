@@ -103,6 +103,21 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
   不支持才退回 setuid `chrome-sandbox`。AppImage 交给 AppRun 自己探测，deb / rpm / Arch 包在
   postinst 里做同样的判断。
 
+### 关窗、托盘与退出
+
+**关窗不是退出——这是上游的设计，不是本项目的移植缺陷。** 上游 `main.ts` 拦截主窗口的 `close`
+并改为隐藏：Host 继续跑、正在跑的任务不中断，会话写锁也不释放（每个会话一把内核 flock，且刻意
+没有过期机制）。所以关窗之后，另一个 DSH 实例（比如终端里的 `dsh web`）打开同一个会话时，会看到
+官方提示「当前会话已被占用，可能是其他正在运行的 DSH 导致的……请退出其他正在运行的 DSH 后重试」。
+
+上游给「回到隐藏窗口」准备了两条路，但文档里写到的只有 Windows 的托盘和 macOS 的 Dock，
+**Linux 原本一条都没有**。补丁 `0013` 把托盘补上：图标常驻，菜单里是「打开」与「退出」，退出走与
+菜单 `Quit`、`Ctrl+Q` 相同的确认流程（Host 有在跑的任务或定时任务时会先问一次）。第一次关窗会弹
+一次原生提示，与 Windows 一致；确认后写 `background-close-confirmed` 标记，以后不再问。
+
+- 真正退出：托盘菜单的「退出」、菜单栏 `Application` → `Quit`、或 `Ctrl+Q`。
+- 找回窗口：再启动一次即可（第二次启动只聚焦已有实例）。
+
 ## 验证状态
 
 **目前只有单一实测环境，后续会尽可能拓展测试范围。** 下面两张表随反馈更新——欢迎在
@@ -113,7 +128,7 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
 
 | 环境 | 状态 |
 |---|---|
-| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **已实测**，正常 |
+| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **已实测**，正常（含托盘：StatusNotifierItem 注册成功，菜单里有「打开」与「退出」，从菜单退出后进程、端口与会话写锁一起释放） |
 | X11（任意发行版 / 桌面环境） | 未验证 |
 | 其他桌面环境（GNOME、Hyprland 等） | 未验证 |
 | Debian / Ubuntu、Fedora / RHEL | 未验证 |
@@ -131,6 +146,15 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
 
 ## 已知限制
 
+- **GNOME 默认看不到托盘。** 托盘走 freedesktop 的 StatusNotifierItem，GNOME 要装
+  `gnome-shell-extension-appindicator` 才会显示。没有托盘宿主时图标不会出现，关窗后就只能靠二次
+  启动把窗口找回——也就是「关窗即静默消失」那个老问题会回来。
+- **Electron 版本比上游 lockfile 钉的高（44.4.5）。** 上游 `apps/desktop/package.json` 写的是
+  `^44.0.0`，caret 本来就允许；但它的 lockfile 把解析钉死在 44.0.0，而那个版本的**托盘项在 KDE 与
+  GNOME 下都注册不上**（上游回归 [electron#53213](https://github.com/electron/electron/issues/53213)，
+  修复 [electron#53214](https://github.com/electron/electron/pull/53214) 直到 2026-08-26 才合并，
+  而 44.0.0 发布于 08-25）。补丁 `0014` 把 lockfile 解到 44.4.5，代价是 Linux 产物自带的 Chromium
+  比上游发布的桌面端更新一点。
 - **没有自动更新。** 上游的强制更新策略通道只认 `desktop-win` / `desktop-mac` 客户端身份，
   Linux 产物也没有更新通道，所以 Linux 版不嵌入策略、不轮询、不会自己更新。
 - **不签名。** 产物是 unsigned 构建。

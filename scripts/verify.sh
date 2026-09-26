@@ -34,6 +34,17 @@ skip() { echo "  [SKIP] $1"; skipped=$((skipped+1)); }
 # 断言一个字符串包含另一段文本；$3 是给人看的说明。
 has()  { if [[ "$1" == *"$2"* ]]; then ok "$3"; else bad "$3（期望包含：$2）"; fi; }
 
+# 会话总线上已注册的 StatusNotifierItem，每行一个 "<bus>/<path>"。
+#
+# 条目名有两种形态，都得认：Electron ≤41 与 44.1.0 之后注册的是自己的总线名
+# （`:1.666/StatusNotifierItem` 或 `org.freedesktop.StatusNotifierItem-<pid>-1/StatusNotifierItem`），
+# 而 44.0.0 那种「服务名拼对象路径」的注册会被宿主静默丢弃，不会出现在这里。
+tray_items() {
+  dbus-send --session --print-reply --dest=org.kde.StatusNotifierWatcher /StatusNotifierWatcher \
+    org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierWatcher \
+    string:RegisteredStatusNotifierItems 2>/dev/null | grep -o 'string "[^"]*"' | cut -d'"' -f2
+}
+
 # unsigned 构建的输出目录（见 electron-builder-config.mjs 的 directories.output）
 OUT="$UPSTREAM/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts"
 UNPACKED="$OUT/linux-unpacked"
@@ -53,7 +64,7 @@ else
   bad "没找到 AppImage/deb/rpm 产物（$OUT）"
 fi
 
-echo "== 2. 未打包目录可执行 =="
+echo "== 2. 未打包目录 =="
 if [[ -x "$UNPACKED/deepseek-harness" ]]; then
   ok "linux-unpacked/deepseek-harness"
   # 真 Node 读不了 asar，Linux 上 dsh 必须是一棵真目录树。
@@ -61,6 +72,23 @@ if [[ -x "$UNPACKED/deepseek-harness" ]]; then
     ok "resources/app/dsh 是解包目录树（asar 已关闭）"
   else
     bad "resources/app/dsh 不是解包目录树——真 Node 读不了 asar"
+  fi
+  # 托盘图：补丁 0013 让 Linux 的托盘指向 resources/tray-linux.png，由 electron-builder 的
+  # Linux extraResources 带进来；它不在补丁里（二进制），所以最可能在这里漏掉。
+  tray_png="$UNPACKED/resources/tray-linux.png"
+  if [[ -f "$tray_png" ]]; then
+    tray_dims="$("$NODE" -e '
+      const b = require("node:fs").readFileSync(process.argv[1])
+      const png = b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      process.stdout.write(png ? `${b.readUInt32BE(16)}x${b.readUInt32BE(20)}` : "not-png")
+    ' "$tray_png" 2>/dev/null)"
+    if [[ "$tray_dims" == "64x64" ]]; then
+      ok "resources/tray-linux.png 在场且是 64x64 PNG"
+    else
+      bad "resources/tray-linux.png 内容不符：$tray_dims"
+    fi
+  else
+    bad "resources/tray-linux.png 缺失（Linux 托盘会拿到空图标）"
   fi
 else
   skip "linux-unpacked 不存在（还没跑 package:linux:x64:dir）"
@@ -283,6 +311,46 @@ CDP
         ok "全部 $renderers 个渲染进程都在独立 user namespace 里且 seccomp 生效"
       else
         bad "渲染进程沙箱不完整（$sandboxed/$renderers）"
+      fi
+
+      # 托盘：Linux 上它由 Electron 进程内的 StatusNotifierItem 提供。两条判据 —— 宿主真的注册了
+      # 我们的项，且该项的菜单里读得到带产品名的条目（打开 + 退出）。第二条才是关键：菜单要的
+      # libdbusmenu-glib 是 dlopen 的，缺了它图标照样出现、菜单却是空的，等于没有退出入口，
+      # 而 ldd 和 namcap 都看不见这件事。
+      # 产品名在两种界面语言里都是 "DeepSeek Harness"，所以断言与语言无关。
+      # 注册是异步的（实测要几秒，取决于面板何时来取），所以这里轮询而不是只看一眼。
+      if command -v dbus-send >/dev/null 2>&1 \
+        && dbus-send --session --print-reply --dest=org.kde.StatusNotifierWatcher /StatusNotifierWatcher \
+             org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierWatcher \
+             string:RegisteredStatusNotifierItems >/dev/null 2>&1; then
+        tray_item=""; tray_labels=0
+        for _ in $(seq 1 30); do
+          for item in $(tray_items); do
+            bus="${item%%/*}"; item_path="/${item#*/}"
+            dbus-send --session --print-reply --dest="$bus" "$item_path" \
+              org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierItem string:ToolTip 2>/dev/null \
+              | grep -q 'DeepSeek Harness' || continue
+            # 回复里印的是 `variant object path "/com/canonical/dbusmenu"`，不是调用时那种 objectpath。
+            menu_path="$(dbus-send --session --print-reply --dest="$bus" "$item_path" \
+              org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierItem string:Menu 2>/dev/null \
+              | sed -n 's/.*object path "\([^"]*\)".*/\1/p' | head -1)"
+            [[ -n "$menu_path" ]] || continue
+            labels="$(dbus-send --session --print-reply --dest="$bus" "$menu_path" \
+              com.canonical.dbusmenu.GetLayout int32:0 int32:-1 array:string: 2>/dev/null \
+              | grep -o 'string "[^"]*"' | grep -c 'DeepSeek Harness')"
+            if (( labels >= 2 )); then
+              tray_item="$item"; tray_labels="$labels"; break 2
+            fi
+          done
+          sleep 1
+        done
+        if [[ -n "$tray_item" ]]; then
+          ok "托盘已注册（$tray_item），菜单里读到 $tray_labels 个带产品名的条目（打开 + 退出）"
+        else
+          bad "没找到菜单可读的已注册托盘项——缺 libdbusmenu-glib 时就是这个症状"
+        fi
+      else
+        skip "没有 StatusNotifierWatcher（非 KDE，或没有会话总线），跳过托盘检查"
       fi
 
       # 共享根：会话与凭据落在根上，而不是某个 profile 里。会话由 Host 在启动后异步建立。

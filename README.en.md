@@ -123,6 +123,26 @@ Three design points worth knowing:
   leaves this to AppRun's own probe, and the deb / rpm / Arch packages make the
   same decision in their postinst.
 
+### Closing, the tray, and quitting
+
+**Closing the window is not quitting — that is upstream's design, not a porting defect.** Upstream
+`main.ts` intercepts the main window's `close` and hides it instead: the Host keeps running, tasks
+are not interrupted, and session write locks are not released (one kernel flock per session, with
+deliberately no expiry). So after a close, another DSH instance — a terminal `dsh web`, say — that
+opens the same session gets the official message "This session is already in use, possibly by
+another running DSH instance … Quit other running DSH instances and try again."
+
+Upstream provides two ways back to a hidden window, but what its documentation covers is the Windows
+tray and the macOS Dock; **Linux had neither.** Patch `0013` adds the tray: the icon stays for the
+whole run, its menu holds "Open" and "Quit", and quitting goes through the same confirmation as the
+menu `Quit` and `Ctrl+Q` (it asks first when the Host has running or scheduled tasks). The first
+close shows a one-time native confirmation, as on Windows; once confirmed it writes the
+`background-close-confirmed` marker and never asks again.
+
+- To really quit: the tray menu's "Quit", the `Application` → `Quit` menu item, or `Ctrl+Q`.
+- To get the window back: launch the application again (a second launch only focuses the instance
+  that is already running).
+
 ## Validation status
 
 **There is only a single tested environment so far, and we intend to widen that coverage.**
@@ -133,7 +153,7 @@ Both tables below are kept up to date as reports come in — please tell us how 
 
 | Environment | Status |
 |---|---|
-| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **Tested**, works |
+| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **Tested**, works (including the tray: the StatusNotifierItem registers, its menu holds Open and Quit, and quitting from that menu releases the process, the port, and the session write locks together) |
 | X11 (any distribution / desktop) | Not tested |
 | Other desktops (GNOME, Hyprland, …) | Not tested |
 | Debian / Ubuntu, Fedora / RHEL | Not tested |
@@ -151,6 +171,17 @@ Both tables below are kept up to date as reports come in — please tell us how 
 
 ## Known limitations
 
+- **GNOME shows no tray by default.** The tray uses freedesktop StatusNotifierItem, which GNOME
+  displays only with `gnome-shell-extension-appindicator` installed. Without a tray host the icon
+  never appears, and a hidden window can then only be recovered by launching the application again
+  — the old "silently running in the background" trap comes back.
+- **Electron is newer than the version upstream's lockfile pins (44.4.5).** Upstream's
+  `apps/desktop/package.json` says `^44.0.0`, which the caret already allows, but its lockfile pins
+  the resolution to 44.0.0 — and that version's **tray item registers on neither KDE nor GNOME**
+  (upstream regression [electron#53213](https://github.com/electron/electron/issues/53213), fixed by
+  [electron#53214](https://github.com/electron/electron/pull/53214) only on 2026-08-26, while 44.0.0
+  was released on 08-25). Patch `0014` resolves the lockfile to 44.4.5; the cost is that Linux
+  artifacts carry a slightly newer Chromium than upstream's desktop releases.
 - **No auto-update.** Upstream's mandatory-update policy channel only recognises
   `desktop-win` / `desktop-mac` client identities, and Linux artifacts carry no
   update channel, so the Linux build embeds no policy, never polls, and never

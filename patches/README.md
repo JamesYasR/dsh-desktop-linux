@@ -5,8 +5,8 @@
 组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
 互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成。
 
-已验证：在 pristine worktree 上 12 个补丁按序 `git apply` 全部干净通过，
-结果与开发工作树逐字节一致（43 个文件全部 `cmp` 相同）。同一组补丁用
+已验证：在 pristine worktree 上 14 个补丁按序 `git apply` 全部干净通过，
+结果与开发工作树逐字节一致（47 个文件全部 `cmp` 相同）。同一组补丁用
 `patch -Np1` 打在上游 release 源码包（tag `dsh-v0.1.7-rc.2`）上也全部干净，
 这正是 PKGBUILD 的 `prepare()` 做的事。
 
@@ -41,6 +41,20 @@
 `0003` 拿去配 electron-builder，`0005` 拿去做打包最前面的预检。按「一个文件只属于一个补丁」，
 规则本身单独成一个补丁。
 
+## 让 Linux 也有托盘（0013–0014）
+
+| 补丁 | 覆盖文件 | 内容 |
+|---|---|---|
+| `0013-desktop-linux-tray.patch` | `src/main.ts`、`src/tray.ts`、`src/background-notice.ts`、`scripts/electron-builder-config.mjs`、`scripts/render-tray-icon.ts` | 托盘的创建条件从只认 `win32` 放宽到 `win32 \|\| linux`；Linux 的托盘图是 `resources/tray-linux.png`（单张 PNG，托盘宿主自己缩放到面板；**用应用图标自身的留白，不做 Windows 那 20% 放大**，见「注意」）；首次关窗的一次性提示同样覆盖 Linux —— 它的文案本来就是「可在系统托盘中重新打开窗口」，在 Linux 上这句话只有有了托盘才成立；渲染器除 ICO 之外也输出那张 PNG；electron-builder 的 Linux `extraResources` 把它带进产物的 `resources/` |
+| `0014-electron-version-tray-fix.patch` | `pnpm-lock.yaml` | 把 lockfile 里 electron 的解析从 `44.0.0` 提到 `44.4.5`。上游 `apps/desktop/package.json` 本来就写 `^44.0.0`（caret 就允许 44.4.5），只是 lockfile 把解析钉在 44.0.0 —— 而那个版本的 Linux 托盘在 KDE 与 GNOME 下都注册不上（上游回归，见「注意」）。改动只有 4 行：importer 的 `version`、`packages` 段的版本名与 integrity、`snapshots` 段的版本名；两个版本的依赖范围逐字相同，所以传递依赖一行都不用动 |
+
+托盘 PNG 是二进制，`patches/` 装不下：makepkg 用的是 GNU patch，它不支持 git 的二进制补丁。
+所以这张图作为普通本地 `source` 走，仓库里存在 `assets/tray-linux.png`，由两条路径各自放进
+`apps/desktop/resources/`：PKGBUILD 的 `prepare()`（`makepkg` 路线）和 `scripts/apply-patches.sh`
+（CI 与本地 `build.sh` 路线）。刷新它 = 在 `apps/desktop` 里跑 `pnpm run render:tray-icon`，
+再把输出的 `resources/tray-linux.png` 拷进 `assets/`（图和 Windows 托盘同源，都是
+`resources/icon-windows.svg`）。
+
 ## 注意
 
 - **dev 模式也需要 `0001`**——`dev.ts` 虽然不走 `package-target.ts`，
@@ -59,3 +73,19 @@
   `package-target.ts:364` 无条件调 `readDesktopBuildCommit()`（没有出口，所以要 `0012`）。
   PKGBUILD 从 release 源码包构建，所以两个变量都由它显式给出，`_DIRTY=1` 也是事实——这个
   构建确实打了补丁。
+- **托盘的依赖问题全在 ELF 之外。** 实测（Electron 44 二进制）：Linux 托盘走进程内的
+  StatusNotifierItem（二进制里有 `StatusIconLinuxDbus`、`org.kde.StatusNotifierWatcher`），
+  全库没有 `appindicator` 字样，`ldd` / `NEEDED` 里也没有，所以**不需要** libappindicator。
+  但托盘菜单要 `libdbusmenu-glib.so.4`——那个库名和 `dbusmenu_*` 符号名都在二进制里，
+  却不在 `NEEDED` 里（1519 个未定义动态符号里没有它），即 dlopen。缺了它图标照出、菜单是空的，
+  等于没有退出入口，而 `ldd` 和 namcap 都看不见，所以它由 PKGBUILD 显式写进 `depends`。
+- **Linux 上可靠的是托盘菜单，不是单击图标。** 实测把 SNI 的 `Activate` 调过去，Electron 的
+  `tray.on('click')` 没有触发（StatusNotifierItem 宿主有权把左键用来弹菜单）。`DesktopTray`
+  保留 click 处理是给 Windows 的；Linux 上「打开」走右键菜单，`verify.sh --runtime` 也是按
+  菜单里的条目来断言。
+- **托盘美术在 Linux 上刻意与 Windows 不同，Windows 那份一个字都没动。** 上游的 `tray-glyph`
+  组只含鲸鱼（底在组外），渲染 Windows ICO 时会被绕方块中心放大 20% —— 因为 Windows 托盘逻辑
+  尺寸是 16px，不放大就看不清。Linux 不同：托盘宿主按面板尺寸自己绘制（KDE 是 22px），1.2× 在
+  那里会显得鲸鱼顶满方块。所以 `renderLinuxTrayIcon()` 按原比例渲（保留应用图标自身的留白，
+  与启动器/任务栏图标观感一致），底图仍然保留，深浅面板都还有对比度。两边同源（都用
+  `resources/icon-windows.svg`），改动只在渲染参数上。

@@ -33,8 +33,13 @@ license=('MIT')
 # `pactree -u gtk3` 含 mesa，包级别 namcap 对这些一条也没报。
 # libxcrypt-compat 是唯一落在 gtk3 闭包外的：捆绑 Python 里那个已废弃的 _crypt 模块链接
 # libcrypt.so.1，而 glibc 2.38 之后这个 soname 由 libxcrypt-compat 提供。namcap 会报它。
+# libdbusmenu-glib 同理是 namcap 看不见的一项，但成因不同：它不是 ELF 依赖而是 dlopen 的。
+# Electron 的 Linux 托盘走进程内 StatusNotifierItem（二进制里没有 appindicator 字样，
+# ldd/NEEDED 里也没有），图标本身不需要 libappindicator；但托盘菜单要靠
+# libdbusmenu-glib.so.4 才能导出（二进制里有这个库名和 dbusmenu_* 符号名，却不在 NEEDED 里）。
+# 缺了它，托盘图标还在、右键菜单是空的——等于没有退出入口。
 depends=('gtk3' 'nss' 'libnotify' 'libxss' 'libxtst' 'xdg-utils' 'at-spi2-core'
-         'libsecret' 'alsa-lib' 'dbus' 'libxcrypt-compat')
+         'libsecret' 'alsa-lib' 'dbus' 'libxcrypt-compat' 'libdbusmenu-glib')
 # python 是 node-gyp 的后备：正常情况下 node-pty / sharp / koffi / native-system 都命中预编译
 # 产物（实测这次构建没有编译任何东西），但预编译缺失时 pnpm install 会退回源码编译。
 # 其余构建工具（patch、bsdtar、make、gcc）由 makepkg 假定存在的 base-devel 提供。
@@ -60,7 +65,11 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         '0010-desktop-linux-policy-opt-out.patch'
         '0011-desktop-linux-package-metadata.patch'
         '0012-desktop-build-commit-release-archive.patch'
-        '0014-electron-version-tray-fix.patch')
+        '0013-desktop-linux-tray.patch'
+        '0014-electron-version-tray-fix.patch'
+        # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
+        # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
+        'tray-linux.png')
 sha256sums=('761df167eaccc337bcee864579fd578ecb0f3cb5dbc7b1d36761508faaec455a'
             '67a38b25575b2e4f3075eb0a516636db22795895eacf5ae9b6f3c13693a22f23'
             '9bb07dc990ed6855977a5f84e93aab918e2fc54fdb0a904ca02bb82843b8fabd'
@@ -74,7 +83,9 @@ sha256sums=('761df167eaccc337bcee864579fd578ecb0f3cb5dbc7b1d36761508faaec455a'
             '062567a5bcd5f4d8e63368a98927055358318f428c88fb851846d64fb859db8e'
             'a3ff4a524a4ebe28551797bd36dab7b7139516e668462f054e616e8a521e3e8f'
             'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715'
-            '56fd75ad67bab6629d83618d09ff29c3aaf0d11f9adb8ff6b887cb71cf0091cb')
+            '3f4c042a250c948caa62c590470ef56a8e1ad326f4bda85c1c5739adc0766b5b'
+            '56fd75ad67bab6629d83618d09ff29c3aaf0d11f9adb8ff6b887cb71cf0091cb'
+            'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 
 prepare() {
   cd "$srcdir"
@@ -93,6 +104,12 @@ prepare() {
     msg2 "applying $(basename "$patchfile")"
     patch -Np1 -i "$srcdir/$(basename "$patchfile")" || return 1
   done
+
+  # 托盘 PNG 落进上游的资源目录（为什么不做成补丁见 source 里的说明）。补丁 0013 让 Linux 的
+  # 托盘指向 resources/tray-linux.png，electron-builder 再把它拷进产物的 resources/。
+  # 这张图由上游自己的渲染器生成：apps/desktop 里跑 `pnpm run render:tray-icon`（补丁 0013
+  # 让该脚本除了 ICO 之外也输出这张 PNG），然后拷进仓库的 assets/。
+  install -Dm644 "$srcdir/tray-linux.png" apps/desktop/resources/tray-linux.png
 }
 
 build() {
