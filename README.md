@@ -1,222 +1,134 @@
 # dsh-desktop-linux
 
-给官方 DeepSeek Harness 桌面端补上 **Linux** 目标。
+**中文** | [English](README.en.md)
 
-官方桌面端（`deepseek-ai/deepseek-harness` 的 `apps/desktop`）只发布 macOS 与 Windows，
-Linux 被明确排除（`apps/desktop/README.md`: *"Linux is not a supported Desktop release target."*）。
-本项目把官方 Electron 桌面端的**打包流水线**移植到 Linux，产物为 AppImage / deb / rpm / PKGBUILD。
+> 独立社区项目。**不是** DeepSeek 官方产品，与 DeepSeek 无隶属关系。
 
-这不是套壳。生态里已有的 Linux 桌面端几乎都是"启动 `dsh web` + 套个窗口"，
-而官方桌面端有自己的 `dsh-app://` 协议、分帧字节管道、内置 Node 与 pnpm、独占 `desktop` profile，
-只能从源码构建。
+把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 官方桌面端
+（`apps/desktop` 的 Electron 应用）的**打包流水线**移植到 Linux，产出
+AppImage / deb / rpm / Arch 包。
 
-## 为什么是独立打包仓库
+上游目前明确不支持 Linux（`apps/desktop/README.md`：*"Linux is not a supported Desktop
+release target."*）。本项目补的就是这一块：让官方打包流水线认得 `linux-x64` 并产出安装包。
 
-上游是超大 monorepo，fork 后 rebase 成本高。PKGBUILD 本来就是
-"clone tag → 打补丁 → 构建"的形状，补丁文件也能直接拿去贴上游 Discussion。
+## 和「套壳版」的区别
 
-```
-dsh-desktop-linux/
-├── README.md
-├── docs/findings.md          ← 每次失败点记录，最值钱的产出
-├── patches/                  ← 一个改动一个 patch（git format-patch）
-├── scripts/
-│   ├── fetch-upstream.sh     # clone + checkout 指定 tag
-│   ├── apply-patches.sh
-│   ├── build.sh
-│   ├── dev-desktop.sh
-│   ├── verify.sh
-│   └── aur-dir.sh            # 摊平成可直接 makepkg / 提交 AUR 的目录
-├── PKGBUILD
-├── deepseek-harness-desktop.install   # pacman 脚本片段（chrome-sandbox / AppArmor）
-└── .github/workflows/build.yml
-```
+生态里已有的 Linux 桌面端大多走另一条路：启动 `dsh web`，再套一个自己的窗口。
+本项目的产物是**官方那个 Electron 应用本身**——它有自己的一套东西，没法靠套壳复现：
 
-## 用法
+- 渲染走自己的 `dsh-app://` 协议，而不是去连一个本地 Web 服务；
+- 内置 Node / pnpm / Python 运行时，不依赖系统 Node；
+- 独占 `$DSH_HOME/profiles/desktop`，不占用 `web` profile。
+
+代价是构建重得多：要拉上游 monorepo、跑 pnpm workspace 构建、再用 electron-builder 打包。
+
+## 安装
+
+| 发行版 | 格式 | 安装方式 |
+|---|---|---|
+| Arch Linux | AUR | `yay -S deepseek-harness-desktop`（或 `paru`） |
+| 通用 | AppImage | 从 [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases) 下载，`chmod +x` 后直接运行 |
+| Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
+| Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
+
+产物是 **unsigned** 构建（文件名里带 `-unsigned`）。安装后 `dsh://` 链接会交给它处理。
+
+## 从源码构建
+
+依赖：Node 22.19+ 或 24+、**pnpm 11**、git、能访问 GitHub 的网络。
+打 rpm 还需要系统有 `rpmbuild`（Arch 上是 `rpm-tools`）。
 
 ```bash
-./scripts/fetch-upstream.sh              # 默认 master，可传 tag
-./scripts/apply-patches.sh
-./scripts/build.sh --dir                 # 先出未打包目录，快速验证
-./scripts/build.sh                       # AppImage（默认）
-./scripts/build.sh --deb                 # 只出 .deb
-./scripts/build.sh --rpm                 # 只出 .rpm
-./scripts/build.sh --all                 # AppImage + deb + rpm
-./scripts/verify.sh                      # 静态校验（CI 跑这个）
-./scripts/verify.sh --runtime            # 额外跑活体矩阵：起窗口、读 dsh-app:// 文档、测 CLI 互通
+git clone https://github.com/ffyfox/dsh-desktop-linux
+cd dsh-desktop-linux
+
+./scripts/fetch-upstream.sh      # 拉上游源码（默认用 PKGBUILD 里钉的 tag）
+./scripts/apply-patches.sh       # 打补丁
+./scripts/build.sh --all         # AppImage + deb + rpm
+./scripts/verify.sh --runtime    # 验证矩阵
 ```
 
-`verify.sh` 的静态部分只看产物与打包元数据，不启动应用；`--runtime` 会真的拉起
-`linux-unpacked`，用 DevTools 协议读渲染文档，结束时自动收掉，并断言真实的 `~/.dsh`
-未被触碰。本机实测 `--runtime`：29 通过 / 0 失败。
-
-每次只出被点名的格式。整条流水线（`build:official` / `release:pack` / `prepare:*`）才是耗时大头，
+`build.sh` 的参数：`--dir`（只出未打包目录，最快）、`--appimage`（默认）、`--deb`、`--rpm`、`--all`。
+整条流水线（`build:official` → `release:pack` → `prepare:*` → `package`）才是耗时大头，
 多打一种格式只多一次 fpm/AppImage 打包，所以分开跑更快，也更容易定位失败。
 
-### Arch 包（PKGBUILD）
+产物落在 `upstream/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts/`。
+
+### 打 deb / rpm 前要填 `.env.linux`
+
+Linux 的发布设置从 `apps/desktop/.env.linux` 读（git-ignored；`build.sh` 首次运行会从
+`.env.linux.example` 生成）：
+
+| 设置 | 何时需要 | 说明 |
+|---|---|---|
+| `DSH_DESKTOP_APP_ID` | 总是 | 例如 `com.deepseek.harness` |
+| `DSH_DESKTOP_LINUX_MAINTAINER` | deb / rpm | 写进 Debian 的 `Maintainer:`、rpm 的 `Packager:`；格式必须是 `名字 <邮箱>`，指的是**打这个包的人** |
+| `DSH_DESKTOP_LINUX_HOMEPAGE` | deb / rpm | 写进 Debian 的 `Homepage:` / rpm 的 `URL:`，按惯例指**上游项目**主页 |
+
+两个容易踩的坑：
+
+- **这三个设置只能从文件读。** 上游会把 `DSH_DESKTOP_APP_ID` 与 `DSH_DESKTOP_LINUX_*`
+  从进程环境里整个滤掉再合并文件，所以 `DSH_DESKTOP_LINUX_MAINTAINER=… ./scripts/build.sh --deb`
+  是**静默无效**的。
+- **反过来，要出哪些格式只能从环境传**：`DSH_DESKTOP_TARGET_FORMATS`。它是一次构建的选择器，
+  写进 `.env.linux` 会被拒收。（`build.sh` 的 `--deb` / `--rpm` / `--all` 已经替你设好了。）
+
+两者都在打包最前面的 `configuration` 阶段校验，不会等 fpm 跑到一半才报错。
+
+### 硬性前提
+
+**必须用 pnpm 11。** 上游仓库声明 `packageManager: pnpm@11.7.0`，pnpm 11 会自己切到该版本；
+pnpm 9 会在 `pnpm install` 报 `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`。
+
+## Arch 包
 
 PKGBUILD 直接吃上游的 release 源码包，不依赖 `./upstream` 检出：
 
 ```bash
-./scripts/aur-dir.sh                     # 摊平到 ./aur（默认），生成 .SRCINFO
-cd aur
-makepkg -C -s --nocheck                  # -C：重新构建时先清 $srcdir
+./scripts/aur-dir.sh     # 摊平成 ./aur，并生成 .SRCINFO
+cd aur && makepkg -si
 ```
 
-`aur-dir.sh` 不是可有可无的糖：**makepkg 只在 `$startdir` 里按 basename 找本地 source**，
-`source=('patches/0001-….patch')` 会直接报 `was not found in the build directory and is not a URL`
-（实测）。所以 AUR 目录必须是 PKGBUILD + 补丁平铺在一起，仓库里保留 `patches/` 只是为了补丁
-系列本身可读。`./aur` 里的内容就是可以直接提交的 AUR 包。
+`aur-dir.sh` 不是可有可无的糖：**makepkg 只在 PKGBUILD 所在目录里按 basename 找本地 source**，
+所以 PKGBUILD 与补丁必须平铺在一起。`./aur` 里的内容就是可以直接提交给 AUR 的形态。
 
-PKGBUILD 只出未打包目录（`package:linux:x64:dir`），把 `linux-unpacked` 装进
-`/opt/deepseek-harness-desktop`，`/usr/bin/deepseek-harness` 做符号链接——Arch 包不需要再套一层
-AppImage/deb/rpm。因此也不需要 `DSH_DESKTOP_LINUX_MAINTAINER` / `_HOMEPAGE`（那是 fpm 的
-control 文件要的）。
+Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/deepseek-harness` 是符号链接——
+Arch 上不需要再套一层 AppImage/deb/rpm。
 
-dev 模式（阶段 1，已验证可起窗口）：
-
-```bash
-./scripts/dev-desktop.sh                 # 构建 + 起窗口
-./scripts/dev-desktop.sh --no-devtools   # 不自动弹 DevTools
-```
-
-### Linux 发布设置（`.env.linux`）
-
-上游按平台读 dotenv，Linux 读 `apps/desktop/.env.linux`（git-ignored；`build.sh` 首次运行会从
-`.env.linux.example` 生成）。只有三个设置：
-
-| 设置 | 何时需要 | 示例 |
-|---|---|---|
-| `DSH_DESKTOP_APP_ID` | 总是 | `com.deepseek.harness` |
-| `DSH_DESKTOP_LINUX_MAINTAINER` | 打 deb / rpm | `ffyfox <299493445+ffyfox@users.noreply.github.com>` |
-| `DSH_DESKTOP_LINUX_HOMEPAGE` | 打 deb / rpm | `https://github.com/deepseek-ai/deepseek-harness` |
-
-- **maintainer** 写进 Debian control 的 `Maintainer:`，rpm 里对应 `Packager:`。它指的是
-  **打这个包的人**，不是上游作者，格式必须是 `名字 <邮箱>`。AppImage 不带 control 文件，
-  所以不需要。
-- **homepage** 写进 Debian 的 `Homepage:` / rpm 的 `URL:`，按惯例指**上游项目**的主页，
-  不是这个重打包仓库。
-- **GitHub 的 noreply 邮箱可以用**。`299493445+ffyfox@users.noreply.github.com` 是 GitHub
-  设置页给出的现代形式（`<数字 ID>+<用户名>@users.noreply.github.com`），旧的
-  `ffyfox@users.noreply.github.com` 也仍然有效。它收不到邮件，但字段合法，第三方重打包
-  普遍这么用。
-- **格式选择不在这里**，而是 `DSH_DESKTOP_TARGET_FORMATS`（一次构建的选择器，与
-  `DSH_DESKTOP_TARGET_PLATFORM` / `_ARCH` 同类，只能从环境传，写进 `.env.linux` 会被拒收）。
-- **反过来，表格里那三个设置不能从环境传。** 上游把 `DSH_DESKTOP_APP_ID` 与
-  `DSH_DESKTOP_LINUX_*` 全列进了 `AMBIENT_RELEASE_SETTING`
-  （`apps/desktop/scripts/desktop-package-environment.mjs`），载入 `.env.linux` 时会先把进程
-  环境里这些名字整个滤掉、再合并文件——所以
-  `DSH_DESKTOP_LINUX_MAINTAINER=… ./scripts/build.sh --deb` 是**静默无效**的，只认文件。
-  CI 里要换 maintainer 只能改 `.env.linux`（或它对应的 `.env.linux.example`），设 GitHub
-  变量或 secret 没有用。
-- 两者都在打包最前面的 `configuration` 阶段校验，不会等到 fpm 跑到一半才报错。
-
-### 硬性前提
-
-- **必须用 pnpm 11.x**（仓库要求 `packageManager: pnpm@11.7.0`）。系统 pnpm 9 会在
-  `pnpm install` 报 `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`——`pnpm-workspace.yaml` 用了
-  pnpm 10+ 的 `overrides` / `allowBuilds` / `minimumReleaseAgeExclude`。pnpm 11 会自己切到
-  `packageManager` 指定的版本（Arch 的 `pnpm` 11.26 实测会下载并改用 11.7.0），所以
-  `makedepends=('pnpm')` 就够了，PKGBUILD 只校验主版本号 ≥ 11。
-- **`dev:desktop` 前必须先跑一次 `pnpm run build`**。`dev.ts` 的 import 是静态提升的，
-  会在它自己那次构建之前解析 `lib/`，干净树上直接跑会 `ERR_MODULE_NOT_FOUND`。
-- **dev 模式也需要 `patches/0001`**。`dev.ts` 虽然不碰 `package-target.ts`，但它调用
-  `resolveDesktopBuildTarget()`，Linux 会抛 `unsupported target linux-x64`。
-- **打 rpm 需要系统装 `rpmbuild`**（Arch 上是 `rpm-tools`）。fpm 只为 rpm 这一步调它，
-  toolchain 预检会在动任何重活之前报出来。deb 不需要 `dpkg`：fpm 自己用 `ar` + `tar` 写归档。
-
-## 阶段进度
-
-| 阶段 | 内容 | 状态 |
-|---|---|---|
-| 0 | 建仓 + 隔离 | 完成 |
-| 1 | dev 模式验证（窗口能否弹出） | **完成：窗口正常弹出**，详见 `docs/findings.md` |
-| 2 | 定位打包失败点，打补丁 | **完成：链路推进到 `prepare:dsh`**，卡在 sharp 段错误 |
-| 3 | 原生模块（node-pty / sharp） | **完成：Linux 上 Host 改走 primary-runtime 的真 Node**，sharp 解码正常 |
-| 4 | 产物：AppImage → deb → rpm → PKGBUILD | **完成**：三种产物 + Arch 包（PKGBUILD）全部产出并实测 |
-| 5 | 验证矩阵（协议、profile 隔离、端口） | **完成**：五项全部实测通过，`./scripts/verify.sh --runtime` 29 通过 / 0 失败 |
-| 6 | 回到上游 Discussion 汇报 | 未开始 |
-
-## 当前状态
-
-打包流水线已经全程走通，产物能起来：
+## 它是怎么工作的
 
 ```
-configuration ✓ → toolchain ✓ → build:official ✓ → release:pack ✓
-→ prepare:runtime ✓ → prepare:packages ✓ → prepare:dsh ✓ → package ✓ → smoke:packaged ✓
+官方 Electron 壳（apps/desktop）
+├── 渲染进程 ──── dsh-app:// 协议 ──── 应用 UI
+└── Host 进程 ─── primary-runtime 自带的真 Node ─── 捆绑的 dsh 运行时
+                       └── $DSH_HOME/profiles/desktop
 ```
 
-`prepare:dsh` 的运行时冒烟里 `"sharp":true`——就是最初段错误的那一步。打包后的应用实测
-能起窗口（标题 `DeepSeek Harness`，欢迎页正常），Host 进程的 executable 是
-`resources/runtime/primary-runtime/dependencies/node/bin/node`。
+三个值得知道的设计点：
 
-关键结论：**Linux 上 Host 跑在 primary-runtime 自带的真 Node 上**，不再用 Electron 的 node 模式。
-连带地，Linux 产物的 dsh 目录树不放进 asar（真 Node 读不了归档）。
-细节与取舍见 `docs/findings.md` 的阶段 3 一节。
+- **Host 跑在真 Node 上，不是 Electron 的 node 模式。** Electron 的 node 模式下 `sharp` 解码会段错误，
+  所以 Linux 的 Host 改走 primary-runtime 自带的 Node。连带地，**Linux 产物的 dsh 目录树不放进 asar**
+  （真 Node 读不了归档），这是 `linux-unpacked` 体积偏大的原因。
+- **profile 是独占的。** 桌面端用 `$DSH_HOME/profiles/desktop`，CLI 连参数层面都拒绝这个 profile
+  （`error: profile "desktop" is managed exclusively by the Electron application`）。
+  会话、设置、凭据仍在 `$DSH_HOME` 根上，与 CLI 共享。
+- **沙箱。** 内核支持非特权 user namespace 时走 namespace 沙箱（渲染进程在独立 user namespace + seccomp）；
+  不支持才退回 setuid `chrome-sandbox`。AppImage 交给 AppRun 自己探测，deb / rpm / Arch 包在
+  postinst 里做同样的判断。
 
-三种产物（`./scripts/build.sh --all`，unsigned）：
+## 已知限制
 
-| 产物 | 大小 |
-|---|---|
-| `deepseek-harness-0.1.7-rc.2-linux-x86_64-unsigned.AppImage` | 339M |
-| `deepseek-harness-0.1.7-rc.2-linux-amd64-unsigned.deb` | 291M |
-| `deepseek-harness-0.1.7-rc.2-linux-x86_64-unsigned.rpm` | 233M |
-
-包元数据已核对：deb 的 `Maintainer` / `Homepage` / `Section: devel` / `Description` 首行非空，
-rpm 的 `Name` / `Group` / `Summary` / `URL` / `Packager` 齐全。三种产物**都有 Chromium 沙箱**：
-AppImage 交给 AppRun 的 user-namespace 探测，deb / rpm 交给 `postinst` / `%post` 里的同一套判断
-（内核支持 unprivileged user namespace 就用 namespace 沙箱，不支持才退回 setuid `chrome-sandbox`）。
-详见 `docs/findings.md` 的阶段 4 一节。
-
-Arch 包（`./scripts/aur-dir.sh` + `makepkg`）：
-
-| 产物 | 大小 |
-|---|---|
-| `deepseek-harness-desktop-0.1.7rc2-1-x86_64.pkg.tar.zst` | 351M（安装后 1071MiB） |
-
-`namcap PKGBUILD` 0 error（另有 2 条 warning：用了 makepkg 的 `msg2` / `error` 内部子程序）；
-`pacman -U` 装上后窗口正常起、19387 端口监听、渲染进程有沙箱、`pacman -R` 卸载无残留。依赖表
-是算出来的（ldd 的 93 个 soname 全部被已声明 `depends` 的传递闭包覆盖），不是照抄 Debian 的包名。
-
-注意 **`namcap <包文件>` 走的是另一套规则**：它对这个包报 25 条 error tag + 4758 条 warning
-tag，但**没有一条是 PKGBUILD 的缺陷**（`opt/` 在 namcap 眼里只是 questionable、包里自带完整的
-python / node / pnpm 运行时、预编译二进制的 RPATH）。逐条对照见 `docs/findings.md`。CI 里前者
-当门禁，后者只报告。
-
-三种产物的 `.desktop` 都带 `MimeType=x-scheme-handler/dsh;`，所以 `dsh://` 链接能交给它：
-AppImage 那份是 `Exec=AppRun %U`（不带 `--no-sandbox`），deb 与 PKGBUILD 用安装前缀的绝对路径，
-三者的 `StartupWMClass` 都是 `deepseek-harness`（Electron 从 `desktopName` 推导窗口 app_id，
-两者必须一致）。注册进 `mimeinfo.cache` 由 `update-desktop-database` 完成——Arch 上
-`desktop-file-utils` 的 pacman hook 会自动做，`.install` 里不需要再调一次。
-
-## 未决事项
-
-- **强制更新策略通道 Linux 不参与**：策略服务的客户端身份只有 `desktop-win` / `desktop-mac`，
-  而且 Linux 产物没有更新通道，所以 Linux 版不嵌入策略、不轮询，也不需要任何
-  `DSH_MANDATORY_UPDATE_*` 设置（`desktopPlatformEmbedsPolicy('linux') === false`，补丁 0010）。
-  措辞要准确：**不是「Linux 没有身份」，而是运行时会把 Linux 客户端报成 `desktop-mac`**——
-  `desktopClientHeaders()` 是 `platform === 'win32' ? 'desktop-win' : 'desktop-mac'`，
-  而 `main.ts:409` 在 Linux 上显式传 `'darwin'`。也就是说账号 / Platform 侧看到的是一台
-  macOS 客户端。这是上游类型联合 `'darwin' | 'win32' | null` 在 Linux 上被迫二选一的结果，
-  不是本项目引入的；要真正支持 Linux，上游得给联合类型加 `'linux'` 并让服务端认识
-  `desktop-linux`。实测记录见 `docs/findings.md` 的阶段 5 一节。
-- **AppImage 的沙箱**：electron-builder 的 legacy AppImage 工具集会在 `.desktop` 里写死
-  `Exec=AppRun --no-sandbox %U`，也就是菜单启动的每一次都没有 Chromium 沙箱。已用
-  `appImage: { executableArgs: [] }` 去掉这个 flag，决定权交给 AppRun 自己的
-  `unshare -Ur true` 探测——**宿主机支持 unprivileged user namespace 时渲染进程是有沙箱的**
-  （实测：独立 user namespace + seccomp 生效）。只有宿主机不支持时才会回落到无沙箱。
-  deb / rpm 走 `postinst` / `%post` 里同一套判断，行为一致。
-- `desktopUpdateMetadataFilename` 仍拒绝 `linux`。Linux 走 unsigned 不经过它；
-  将来要 Linux 更新通道才需要动。
-- **`linux-unpacked` 约 1.1G**。asar 关闭后是小文件目录树，AppImage 压成 squashfs 后 339M，
+- **没有自动更新。** 上游的强制更新策略通道只认 `desktop-win` / `desktop-mac` 客户端身份，
+  Linux 产物也没有更新通道，所以 Linux 版不嵌入策略、不轮询、不会自己更新。
+- **不签名。** 产物是 unsigned 构建。
+- **Platform 侧会把 Linux 客户端认成 macOS。** 上游的客户端身份映射是
+  `platform === 'win32' ? 'desktop-win' : 'desktop-mac'`，Linux 落到 `desktop-mac`。
+  这是上游类型联合 `'darwin' | 'win32' | null` 的结果，不是本项目引入的；
+  同一个请求里的 `device_model` 又是 `linux-x64`。
+- **`linux-unpacked` 约 1.1G。** asar 关闭后是小文件目录树，AppImage 压成 squashfs 后 339M，
   但首次启动的文件读取比 asar 多。
+- **只做 x86_64。**
 
-## 纪律
+## 许可
 
-1. **`DSH_HOME` 必须指向临时目录。** 本机 3080 上跑着 GUI，`~/.dsh` 有 1.7G；
-   桌面端要用 `profiles/desktop`，绝不能碰正在用的 `web` profile。
-   注意：**DSH 会话自己会把 `DSH_HOME` 设成真实的 `~/.dsh`**，所以 `scripts/*.sh` 刻意
-   不读 `DSH_HOME`，只读 `DSH_DESKTOP_LINUX_HOME`（默认 `/tmp/dsh-desktop-test`），
-   并在 `DSH_HOME == $HOME/.dsh` 时直接退出。
-2. **磁盘**：`/home` 余量有限，构建吃 monorepo clone + pnpm store + Electron 二进制 + 产物。
-3. **上游 Issues 与 PRs 都关闭**，只能 fork 或走 Discussion。
+MIT。上游 `deepseek-harness` 也是 MIT。本仓库只含打包脚本、补丁与包定义，不含上游源码。

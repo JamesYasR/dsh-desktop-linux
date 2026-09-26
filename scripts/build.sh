@@ -57,9 +57,8 @@ esac
 
 # --- Linux 发布设置文件（上游按平台读 dotenv，Linux 用 .env.linux）---
 # APP_ID 必填；MAINTAINER/HOMEPAGE 只有打 deb/rpm 时才要（fpm 的 control 文件缺这两项会拒收）。
-# 强制更新策略通道是 Windows/macOS 专有的（策略服务只认 desktop-win / desktop-mac 客户端身份，
-# Linux 没有对应身份），且 Linux 产物没有更新通道，所以 Linux 版不嵌入策略、也不轮询。详见
-# docs/findings.md。
+# 强制更新策略通道是 Windows/macOS 专有的：Linux 产物没有更新通道，所以 Linux 版不嵌入策略、
+# 也不轮询。
 ENV_FILE="$UPSTREAM/apps/desktop/.env.linux"
 ENV_EXAMPLE="$ENV_FILE.example"
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -79,8 +78,8 @@ echo "==> DSH_HOME=$DSH_HOME"
 echo "==> apps/desktop script: $SCRIPT${FORMATS:+ (formats: $FORMATS)}"
 mkdir -p "$DSH_HOME"
 
-# 原生模块现状（2026-09-25 实测）：node-pty 与 sharp 的 linux-x64 二进制都随
-# pnpm install 就位，BRIEF 里那两条已知阻塞点在当前版本不适用。
+# 原生模块现状（实测）：node-pty 与 sharp 的 linux-x64 二进制都随 pnpm install 就位，
+# 不需要额外编译。
 if ! find "$UPSTREAM/node_modules" -name 'pty.node' -print -quit 2>/dev/null | grep -q .; then
   echo "==> 警告：没找到 pty.node" >&2
 fi

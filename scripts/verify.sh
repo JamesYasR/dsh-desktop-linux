@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 验证矩阵（阶段 5）。逐项检查，失败不中断，最后汇总。
+# 验证矩阵。逐项检查，失败不中断，最后汇总。
 #
 #   ./scripts/verify.sh             静态部分：只看产物与打包元数据，不启动应用（CI 跑这个）
 #   ./scripts/verify.sh --runtime   额外跑活体矩阵：真的拉起 linux-unpacked，用 DevTools
 #                                   协议读渲染文档，结束时自动收掉
 #
 # 活体部分需要显示器，且刻意只碰临时 DSH_HOME；同时断言真实的 ~/.dsh 未被触碰。
-# 各检查项的依据与实测记录见 docs/findings.md 的阶段 5 一节。
+# 每项检查为什么这么判，都写在它自己的注释里。
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -246,7 +246,7 @@ CDP
         bad "dsh-app:// 没有渲染出 UI（最后一次探测：${cdp_out:-无输出}）"
       fi
 
-      # Host 必须跑在 primary-runtime 自带的真 Node 上（阶段 3 的结论）。
+      # Host 必须跑在 primary-runtime 自带的真 Node 上（Electron 的 node 模式下 sharp 会段错误）。
       host_pid=""
       for p in $(pgrep -f 'dsh-desktop-host' 2>/dev/null); do
         if [[ "$(readlink -f "/proc/$p/exe" 2>/dev/null)" == "$(readlink -f "$PRIMARY_NODE")" ]]; then

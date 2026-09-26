@@ -10,7 +10,7 @@
 `patch -Np1` 打在上游 release 源码包（tag `dsh-v0.1.7-rc.2`）上也全部干净，
 这正是 PKGBUILD 的 `prepare()` 做的事。
 
-## 阶段 2：让 Linux 成为受支持的 target
+## 让 Linux 成为受支持的 target（0001–0007）
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
@@ -22,7 +22,7 @@
 | `0006-desktop-package-linux-scripts.patch` | `apps/desktop/package.json` | `package:linux:x64` / `package:linux:x64:dir` |
 | `0007-tests-linux-x64-supported.patch` | 3 个 `tests/*.spec.ts` | 把「断言 Linux 抛错」改成「断言 Linux 受支持」 |
 
-## 阶段 3：让 Host 跑在真 Node 上（解掉 sharp 段错误）
+## 让 Host 跑在真 Node 上（0008–0010）
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
@@ -30,7 +30,7 @@
 | `0009-desktop-packaging-host-runtime.patch` | `scripts/dev.ts`、`scripts/smoke-{runtime,prepared-runtime,packaged-runtime}.ts`、`scripts/sign-primary-runtime.ts`、`tests/fixtures/runtime-payload-smoke.mjs`、`tests/prepared-runtime-smoke.spec.ts` | 把 Host 运行时贯穿 dev / 打包 / 冒烟；payload smoke 的 Electron 专属断言改为按平台判断 |
 | `0010-desktop-linux-policy-opt-out.patch` | `desktop-policy-environment.{mjs,d.mts}`、`tests/desktop-policy-environment.spec.ts` | 新增 `desktopPlatformEmbedsPolicy()`：策略服务只认 `desktop-win` / `desktop-mac`，Linux 不参与 |
 
-## 阶段 4：产物（AppImage / deb / rpm / PKGBUILD）
+## 产物与包元数据（0011–0012）
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
@@ -43,7 +43,7 @@
 
 ## 注意
 
-- **阶段 1（dev 模式）也需要 `0001`**——`dev.ts` 虽然不走 `package-target.ts`，
+- **dev 模式也需要 `0001`**——`dev.ts` 虽然不走 `package-target.ts`，
   但会调用 `resolveDesktopBuildTarget()`，Linux 上抛 `unsupported target linux-x64`。
 - 上游有手写的 `.d.mts` 声明文件，改 `.mjs` 的 JSDoc **不够**，类型联合必须同步改 `.d.mts`，
   否则 `tsc` 报错。
@@ -59,5 +59,3 @@
   `package-target.ts:364` 无条件调 `readDesktopBuildCommit()`（没有出口，所以要 `0012`）。
   PKGBUILD 从 release 源码包构建，所以两个变量都由它显式给出，`_DIRTY=1` 也是事实——这个
   构建确实打了补丁。
-
-详见 `docs/findings.md`。

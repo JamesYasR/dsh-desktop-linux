@@ -1,7 +1,7 @@
 # Maintainer: ffyfox <299493445+ffyfox@users.noreply.github.com>
 #
 # 官方 DeepSeek Harness 桌面端（Linux），从上游 monorepo 的 release 源码包构建。
-# 这不是社区套壳版：跑的就是上游 apps/desktop 的 Electron 打包流水线，见 docs/findings.md。
+# 这不是社区套壳版：跑的就是上游 apps/desktop 的 Electron 打包流水线。
 #
 # 本目录里的 *.patch 是补丁系列（见 patches/README.md）。它们必须平铺在 PKGBUILD 旁边：
 # makepkg 只在 PKGBUILD 所在目录里按 basename 找本地 source，放进 patches/ 子目录会直接报
@@ -104,15 +104,14 @@ build() {
   local pnpm_version
   pnpm_version="$(pnpm --version)"
   if (( ${pnpm_version%%.*} < 11 )); then
-    error "需要 pnpm 11 或更新版本，当前是 $pnpm_version（见 docs/findings.md）"
+    error "需要 pnpm 11 或更新版本，当前是 $pnpm_version（上游声明 packageManager: pnpm@11.7.0；pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH）"
     return 1
   fi
 
   # Linux 发布设置：APP_ID 必填。MAINTAINER/HOMEPAGE 只在打 deb/rpm 时要（fpm 的 control
   # 缺这两项会拒收），本包只出未打包目录，所以不需要。
-  # 强制更新策略通道是 Windows/macOS 专有的：策略服务只认 desktop-win / desktop-mac 客户端
-  # 身份，Linux 没有对应身份，产物也没有更新通道。所以 Linux 版不嵌入策略、不轮询，上游要求
-  # 必填的 *_ORIGIN 在这里用不到。详见 docs/findings.md。
+  # 强制更新策略通道是 Windows/macOS 专有的：Linux 产物没有更新通道，所以不嵌入策略、不轮询，
+  # 上游要求必填的 *_ORIGIN 在这里用不到。
   cat > apps/desktop/.env.linux <<EOF
 DSH_DESKTOP_APP_ID=com.deepseek.harness
 EOF
@@ -132,7 +131,7 @@ package() {
 
   local unpacked="apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts/linux-unpacked"
   if [[ ! -d "$unpacked" ]]; then
-    error "找不到 $unpacked，构建产物路径可能变了（见 docs/findings.md）"
+    error "找不到 $unpacked，构建产物路径可能变了"
     return 1
   fi
 

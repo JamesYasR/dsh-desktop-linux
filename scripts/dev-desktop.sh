@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 阶段 1：以 dev 模式起官方桌面端窗口（不走打包流水线）。
+# 以 dev 模式起官方桌面端窗口（不走打包流水线）。
 #
 #   ./scripts/dev-desktop.sh               # 构建后启动（默认会弹 DevTools）
 #   ./scripts/dev-desktop.sh --no-build    # 跳过构建，直接启动
 #   ./scripts/dev-desktop.sh --no-devtools # 不自动弹 DevTools
 #
-# 前提与坑（详见 docs/findings.md）：
+# 前提与坑：
 #   1. 必须用 pnpm 11.7.0 —— 仓库的 pnpm-workspace.yaml 用了 pnpm 10+ 的
 #      overrides/allowBuilds/minimumReleaseAgeExclude，pnpm 9 会报
 #      ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
