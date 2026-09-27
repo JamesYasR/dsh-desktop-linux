@@ -134,11 +134,14 @@ another running DSH instance … Quit other running DSH instances and try again.
 
 Upstream provides two ways back to a hidden window, but what its documentation covers is the Windows
 tray and the macOS Dock; **Linux had neither.** Patch `0013` adds the tray: the icon stays for the
-whole run, its menu holds "Open" and "Quit", and quitting goes through the same confirmation as the
-menu `Quit` and `Ctrl+Q` (it asks first when the Host has running or scheduled tasks). The first
-close shows a one-time native confirmation, as on Windows; once confirmed it writes the
-`background-close-confirmed` marker and never asks again.
+whole run, and its menu holds "Open" and "Quit". Reach that menu with a **right** click: a left click
+is the StatusNotifierItem `Activate`, which the host is free to handle its own way (on KDE it only
+flashes the taskbar icon and opens no menu), so the left button is not a dependable entry. Quitting
+goes through the same confirmation as the menu `Quit` and `Ctrl+Q` (it asks first when the Host has
+running or scheduled tasks). The first close shows a one-time native confirmation, as on Windows;
+once confirmed it writes the `background-close-confirmed` marker and never asks again.
 
+- The tray menu opens on a **right** click; a left click does not open it (see above).
 - To really quit: the tray menu's "Quit", the `Application` → `Quit` menu item, or `Ctrl+Q`.
 - To get the window back: launch the application again (a second launch only focuses the instance
   that is already running).
