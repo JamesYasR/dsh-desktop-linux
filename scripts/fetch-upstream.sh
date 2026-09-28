@@ -3,7 +3,7 @@
 #
 #   ./scripts/fetch-upstream.sh              # PKGBUILD 里的 _tag，--depth 1
 #   ./scripts/fetch-upstream.sh master       # 指定分支
-#   ./scripts/fetch-upstream.sh v0.1.7-rc.2  # 指定 tag
+#   ./scripts/fetch-upstream.sh v0.2.0-rc.1  # 指定 tag
 #   REFRESH=1 ./scripts/fetch-upstream.sh    # 已存在则重新拉取
 set -euo pipefail
 

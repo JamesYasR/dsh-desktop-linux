@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index bab440e..39da0ba 100644
+index 1fb7878..c1a5f26 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -22,7 +22,8 @@ import {
@@ -60,7 +60,7 @@ index bab440e..39da0ba 100644
      electronDist: buildPaths.electron,
      electronFuses: { runAsNode: true },
      beforeBuild: async () => {
-@@ -229,9 +242,38 @@ export function createElectronBuilderConfig(
+@@ -231,9 +244,38 @@ export function createElectronBuilderConfig(
        target: ['nsis'],
      },
      linux: {

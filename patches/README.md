@@ -1,13 +1,13 @@
 # 补丁
 
-按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `477b4f4`。
+按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `4878cda`（tag `dsh-v0.2.0-rc.1`）。
 
 组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
 互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成。
 
 已验证：在 pristine worktree 上 14 个补丁按序 `git apply` 全部干净通过，
 结果与开发工作树逐字节一致（47 个文件全部 `cmp` 相同）。同一组补丁用
-`patch -Np1` 打在上游 release 源码包（tag `dsh-v0.1.7-rc.2`）上也全部干净，
+`patch -Np1` 打在上游 release 源码包（tag `dsh-v0.2.0-rc.1`）上也全部干净，
 这正是 PKGBUILD 的 `prepare()` 做的事。
 
 ## 让 Linux 成为受支持的 target（0001–0007）

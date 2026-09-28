@@ -55,11 +55,41 @@ CLI="$APPDSH/node_modules/@deepseek-ai/dsh/lib/bin.js"
 # 探测用的 node：用系统 node 读 built lib，不依赖产物里那份运行时。
 NODE="$(command -v node || true)"
 
+# 当前基线的版本：PKGBUILD 的 _tag 去掉 "dsh-v" 前缀（dsh-v0.2.0-rc.1 → 0.2.0-rc.1）。产物文件名、
+# 打包后的 package.json 用的都是这个版本。
+#
+# 为什么需要它：只跑了 build.sh --dir 时，$OUT 里还留着上一版基线的 AppImage/deb/rpm，原先的静态
+# 检查对它们照样 PASS——验的其实是旧产物（2026-09-29 实测踩到：0.2.0-rc.1 的验证里有三条 PASS 是
+# 9 月 26 日那份 0.1.7-rc.2 的包）。旧版本一律 skip 而不是 bad，因为 --dir 之后本来就没有新的
+# AppImage/deb/rpm，那是正常状态，只有「拿旧产物当通过」才是缺陷。
+EXPECTED_VERSION="$(bash -c 'source "$1" >/dev/null 2>&1; printf %s "${_tag:-}"' _ "$ROOT/PKGBUILD" | sed 's/^dsh-v//')"
+if [[ -z "$EXPECTED_VERSION" ]]; then
+  echo "错误：从 $ROOT/PKGBUILD 读不到 _tag，无法判断产物版本" >&2
+  exit 1
+fi
+
+# 从产物文件名里取版本：deepseek-harness-<版本>-linux-<arch>-unsigned.<格式>
+artifact_version() {
+  sed -n 's/^deepseek-harness-\(.*\)-linux-\(x86_64\|amd64\)-unsigned\.\(AppImage\|deb\|rpm\)$/\1/p' <<<"$(basename "$1")"
+}
+
 echo "== 1. 产物存在 =="
 mapfile -t artifacts < <(find "$OUT" -maxdepth 1 \
   \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) 2>/dev/null)
+# 只有版本与当前基线一致、或版本取不出来的产物才算「这次要验的」；旧版本记下来给后面跳过。
+fresh_artifacts=()
 if (( ${#artifacts[@]} > 0 )); then
-  for a in "${artifacts[@]}"; do ok "$(basename "$a") ($(du -h "$a" | cut -f1))"; done
+  for a in "${artifacts[@]}"; do
+    a_version="$(artifact_version "$a")"
+    if [[ "$a_version" == "$EXPECTED_VERSION" ]]; then
+      ok "$(basename "$a") ($(du -h "$a" | cut -f1))"
+      fresh_artifacts+=("$a")
+    elif [[ -z "$a_version" ]]; then
+      bad "$(basename "$a") 的文件名里读不出版本，无法确认它属于当前基线 $EXPECTED_VERSION"
+    else
+      skip "$(basename "$a") 是 $a_version 的旧产物（当前基线 $EXPECTED_VERSION），跳过；要验它先跑 build.sh --all"
+    fi
+  done
 else
   bad "没找到 AppImage/deb/rpm 产物（$OUT）"
 fi
@@ -67,6 +97,17 @@ fi
 echo "== 2. 未打包目录 =="
 if [[ -x "$UNPACKED/deepseek-harness" ]]; then
   ok "linux-unpacked/deepseek-harness"
+  # 未打包目录是不是当前基线打出来的：打包后的 package.json 版本就是上游版本。
+  if [[ -n "$NODE" && -f "$UNPACKED/resources/app/package.json" ]]; then
+    unpacked_version="$("$NODE" -p "require('$UNPACKED/resources/app/package.json').version" 2>/dev/null || true)"
+    if [[ "$unpacked_version" == "$EXPECTED_VERSION" ]]; then
+      ok "linux-unpacked 的 package.json 版本是 $unpacked_version"
+    else
+      bad "linux-unpacked 是 $unpacked_version 的产物（当前基线 $EXPECTED_VERSION）——先重跑 build.sh --dir"
+    fi
+  else
+    skip "读不到 linux-unpacked/resources/app/package.json 的版本"
+  fi
   # 真 Node 读不了 asar，Linux 上 dsh 必须是一棵真目录树。
   if [[ -d "$APPDSH/node_modules" ]]; then
     ok "resources/app/dsh 是解包目录树（asar 已关闭）"
@@ -111,7 +152,10 @@ fi
 echo "== 4. 打包元数据 =="
 # .desktop 决定三件事：菜单项、窗口与任务的关联（StartupWMClass）、以及 dsh:// 的处理者（MimeType）。
 # AppImage 的那份在 squashfs 里，用运行时自带的解包开关取，不需要 FUSE。
-appimage="$(find "$OUT" -maxdepth 1 -name '*.AppImage' -print -quit 2>/dev/null)"
+appimage=""
+if (( ${#fresh_artifacts[@]} > 0 )); then
+  for a in "${fresh_artifacts[@]}"; do [[ "$a" == *.AppImage ]] && { appimage="$a"; break; }; done
+fi
 if [[ -n "$appimage" ]]; then
   extract="$(mktemp -d)"
   ( cd "$extract" && "$appimage" --appimage-extract '*.desktop' >/dev/null 2>&1 )
@@ -132,7 +176,7 @@ if [[ -n "$appimage" ]]; then
   fi
   rm -rf "$extract"
 else
-  skip "没有 AppImage，跳过 .desktop 检查"
+  skip "没有当前基线（$EXPECTED_VERSION）的 AppImage，跳过 .desktop 检查"
 fi
 
 # PKGBUILD 手写一份 .desktop（Arch 包不走 fpm），内容取自上游 deb 里 electron-builder 生成的那份。

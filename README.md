@@ -38,7 +38,7 @@ release target."*）。本项目补的就是这一块：让官方打包流水线
 ## 从源码构建
 
 依赖：Node 22.19+ 或 24+、**pnpm 11**、git。
-打 rpm 还需要系统有 `rpmbuild`（Arch 上是 `rpm-tools`）。
+打 rpm 还需要系统有 `rpmbuild`。
 
 ```bash
 git clone https://github.com/ffyfox/dsh-desktop-linux

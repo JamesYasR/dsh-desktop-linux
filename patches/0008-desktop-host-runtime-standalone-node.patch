@@ -1,8 +1,8 @@
 diff --git a/apps/cli/tests/desktop-host.e2e.ts b/apps/cli/tests/desktop-host.e2e.ts
-index e486354..2eebadd 100644
+index 615270a..d005dd5 100644
 --- a/apps/cli/tests/desktop-host.e2e.ts
 +++ b/apps/cli/tests/desktop-host.e2e.ts
-@@ -66,7 +66,10 @@ it.each([false, true])('settles startup after parent IPC disconnect (boot failur
+@@ -70,7 +70,10 @@ it.each([false, true])('settles startup after parent IPC disconnect (boot failur
      })
      expect(boot.packageManager.command).toBe(process.execPath)
      expect(boot.packageManager.args).toEqual(['--expose-internals', pnpm])
@@ -97,10 +97,10 @@ index 948a88e..a5888e8 100644
      })
      this.child = child
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index a59a8a8..ebc4adb 100644
+index fcc1f54..390f315 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -49,6 +49,7 @@ import { DesktopMandatoryUpdateWindow } from './mandatory-update-window.ts'
+@@ -51,6 +51,7 @@ import { DesktopMandatoryUpdateWindow } from './mandatory-update-window.ts'
  import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
  import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
  import { readDesktopRuntime } from './runtime-tree.ts'
@@ -108,7 +108,7 @@ index a59a8a8..ebc4adb 100644
  import { DesktopBrowserGuests } from './browser-guests.ts'
  import { installDesktopShortcuts } from './keyboard.ts'
  import { DesktopUpdateOverlays } from './update-overlay.ts'
-@@ -139,21 +140,22 @@ protocol.registerSchemesAsPrivileged([{
+@@ -141,21 +142,22 @@ protocol.registerSchemesAsPrivileged([{
  
  interface RuntimeResources {
    readonly nodeBin: string
@@ -134,14 +134,14 @@ index a59a8a8..ebc4adb 100644
  }
  
  function developmentPrimaryRuntime(): string {
-@@ -407,7 +409,8 @@ async function main(): Promise<void> {
+@@ -418,7 +420,8 @@ async function main(): Promise<void> {
      () => locale.id === 'zh-CN' ? 'zh_CN' : 'en_US', process.platform === 'win32' ? 'win32' : 'darwin')
    const backend = new DesktopBackendController((onFailure) => {
      const hostInspectPort = developmentHostInspectPort(development)
 -    const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
 +    const host = new DesktopHostProcess(
 +      desktopNodeRuntime(process.platform, resources.electron, primaryRuntime), resources.dsh, activeProject,
-       hostInspectPort, process.env, onFailure,
+       hostInspectPort, { ...process.env, DSH_CLIENT_VERSION: desktopClientVersion() }, onFailure,
        primaryRuntime,
        resources, (next) => { platformView.setSession(next) })
 diff --git a/apps/desktop/src/node-environment.ts b/apps/desktop/src/node-environment.ts

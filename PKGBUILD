@@ -16,11 +16,11 @@
 # pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
 
 pkgname=dsh-desktop-linux
-pkgver=0.1.7rc2
-pkgrel=2
-_tag='dsh-v0.1.7-rc.2'
-_commit='477b4f420553e8a52c2fbccc464d7561b239c443'
-# GitHub 源码包的顶层目录名 = <repo>-<tag>，tag 自带的 "v" 不剥（实测 dsh-v0.1.7-rc.2）
+pkgver=0.2.0rc1
+pkgrel=1
+_tag='dsh-v0.2.0-rc.1'
+_commit='4878cdabd87d4041bdaff61d04c966883b9fd07a'
+# GitHub 源码包的顶层目录名 = <repo>-<tag>，tag 自带的 "v" 不剥（实测 dsh-v0.2.0-rc.1）
 _srcdirname="deepseek-harness-$_tag"
 
 pkgdesc='Official DeepSeek Harness desktop application (Electron shell around a bundled dsh runtime)'
@@ -70,21 +70,21 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
         # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
         'tray-linux.png')
-sha256sums=('761df167eaccc337bcee864579fd578ecb0f3cb5dbc7b1d36761508faaec455a'
+sha256sums=('fb995c05575a1381de30646a0a96dbc2988fd9e0db19dd92e0841f2721c6fe5b'
             '67a38b25575b2e4f3075eb0a516636db22795895eacf5ae9b6f3c13693a22f23'
             '9bb07dc990ed6855977a5f84e93aab918e2fc54fdb0a904ca02bb82843b8fabd'
-            '766eca789d7dfd308eb33bc8c05b67b13dc65410ebfdd8fdac8950db7ebabf6e'
+            '89ea7df4edbd9adb7f31cd3ae4e74e49a18922e721d57b825a516ca6fe09cf1d'
             'a69154978f2383dee412069f2f8ebd4889293bf1e6528a6731fde9a2b6ee8289'
             '528b0ba6334fa4d3003756ee921708753204fc265a40e406ecbf25456cce9fe5'
-            '3f797bf87ce42f78df091415625c1785c6e38a112a17db9ca9b09fa764205b8a'
+            '57ad7aa51c120cb06822e5d7532b84e88c40ab3e17190bce04b6e2cb0be2c847'
             'b78a49f2ca34679f78aad141f3d99ee74bec205b60d19b26fe9a1f0e69f88f2b'
-            '9b1b2089513ea7c09430dd9f200449191a2e8776e4effaba8b79faa34441ea64'
+            '7ba1cff3b680679d81a28d49dc5790913ba2164d52b7bec4003cb573eaff1bff'
             '62fca9bb192ccc7114f58b14245701a5b765cb16e46ec730c59e73570b87dbfd'
             '062567a5bcd5f4d8e63368a98927055358318f428c88fb851846d64fb859db8e'
             'a3ff4a524a4ebe28551797bd36dab7b7139516e668462f054e616e8a521e3e8f'
             'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715'
-            '3f4c042a250c948caa62c590470ef56a8e1ad326f4bda85c1c5739adc0766b5b'
-            '56fd75ad67bab6629d83618d09ff29c3aaf0d11f9adb8ff6b887cb71cf0091cb'
+            '61de3413a9be63877e1dae7fd52fb017fcd6147697612de115527928ce574c15'
+            '9c9a7e074c72143d573934a0f19423eebadb614f66cce6cd8b7fe7df07e65031'
             'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 
 prepare() {

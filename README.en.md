@@ -44,7 +44,7 @@ installed, `dsh://` links are handed to it.
 ## Building from source
 
 Requirements: Node 22.19+ or 24+, **pnpm 11**, and git.
-Building the rpm additionally needs `rpmbuild` on the system (`rpm-tools` on Arch).
+Building the rpm additionally needs `rpmbuild` on the system.
 
 ```bash
 git clone https://github.com/ffyfox/dsh-desktop-linux
