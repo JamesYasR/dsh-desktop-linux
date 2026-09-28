@@ -21,3 +21,7 @@ node_modules/
 
 # PKGBUILD 摊平目录（由 scripts/pkgbuild-dir.sh 生成）
 /pkgbuild/
+
+# 本机专用的指令 overlay（AGENTS.md 的本地补充）
+AGENTS.local.md
+CLAUDE.local.md
