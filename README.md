@@ -126,10 +126,11 @@ Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/
 |---|---|
 | Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **已实测**，正常 |
 | Ubuntu 26.04 LTS · GNOME 50 · Wayland · x86_64 | **已实测**，正常（托盘宿主 Ubuntu 自带） |
-| Debian 13 · GNOME 48 · Wayland · x86_64 | **已实测**，正常（托盘要装扩展并重登，见[已知限制](#已知限制)） |
-| X11（任意发行版 / 桌面环境） | 未验证 |
-| 其他桌面环境（Hyprland 等） | 未验证 |
-| Fedora / RHEL | 未验证 |
+| Debian 13 · GNOME 48 · Wayland · x86_64 | **已实测**，正常（托盘要装扩展，见[已知限制](#已知限制)） |
+| Fedora 44 Workstation · GNOME 50 · Wayland · x86_64 | **已实测**，正常（托盘要装扩展，见[已知限制](#已知限制)） |
+| 其他发行版（Linux Mint / CachyOS 等） | 未验证 |
+| 其他DE/WM（Xfce / Hyprland 等） | 未验证 |
+| X11 | 未验证 |
 | aarch64 | 未构建、未验证 |
 
 ### 产物
@@ -137,19 +138,20 @@ Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/
 | 产物 | 状态 |
 |---|---|
 | AppImage | **已实测**：构建并起窗口 |
-| `linux-unpacked` | **已实测**：`verify.sh --runtime` 活体矩阵 |
 | deb | **已实测**：`apt install` → 启动 → 托盘、关窗 → 退出 |
-| rpm | 只核对过 `rpm -qip` 字段，未在 Fedora / RHEL 上安装运行 |
+| rpm | **已实测**：`dnf install` → 启动 → 托盘、关窗 → 退出 |
 | Arch 包 | **已实测**：`makepkg` → `pacman -U` 安装 → 启动、沙箱、卸载 |
+| `linux-unpacked` | **已实测**：`verify.sh --runtime` 活体矩阵 |
 
 ## 已知限制
 
 - **GNOME 默认看不到托盘，要自己装扩展。** 托盘走 freedesktop 的 StatusNotifierItem，GNOME 本体
-  不提供宿主，装 `gnome-shell-extension-appindicator` 才有（Ubuntu 默认已装，Debian 要自己
-  `apt install`）。装完还有两个坑：扩展 UUID 是 `ubuntu-appindicators@ubuntu.com`（Debian 13 的
-  59-4 就是这个名字，旧文档里的 `appindicatorsupport@rgcjonas.gmail.com` 已废弃），而且**新装的
+  不提供宿主，装 `gnome-shell-extension-appindicator` 才有（Ubuntu 默认已装；Debian 要自己
+  `apt install`，Fedora 要 `dnf install`）。装完还有两个坑：扩展 UUID 是
+  `ubuntu-appindicators@ubuntu.com`（Debian 13 的 59-4 就是这个名字，旧文档里的
+  `appindicatorsupport@rgcjonas.gmail.com` 已废弃），而且**新装的
   扩展不会热加载**，得注销重登才生效。没有托盘宿主时图标不会出现，关窗后就只能靠二次
-  启动把窗口找回——也就是「关窗即静默消失」那个老问题会回来。
+  启动把窗口找回。
 - **Electron 版本比上游 lockfile 钉的高（44.4.5）。** 上游 `apps/desktop/package.json` 写的是
   `^44.0.0`，caret 本来就允许；但它的 lockfile 把解析钉死在 44.0.0，而那个版本的**托盘项在 KDE 与
   GNOME 下都注册不上**（上游回归 [electron#53213](https://github.com/electron/electron/issues/53213)，
@@ -158,6 +160,11 @@ Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/
   比上游发布的桌面端更新一点。
 - **没有自动更新。** 上游的强制更新策略通道只认 `desktop-win` / `desktop-mac` 客户端身份，
   Linux 产物也没有更新通道，所以 Linux 版不嵌入策略、不轮询、不会自己更新。
+- **没有「安装命令行工具」入口。** 官方桌面端在 macOS / Windows 上能从菜单把自带的 `dsh` CLI 装进
+  PATH（macOS 提权建 `/usr/local/bin/dsh` 符号链接，Windows 写用户 PATH）；上游只实现了这两条分支，
+  Linux 产物不提供。想在终端用 `dsh` 得自己装，或直接用应用自带的那份
+  （`resources/app/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js`，配 `resources/runtime/primary-runtime`
+  里的 node）。
 - **不签名。** 产物是 unsigned 构建。
 - **Platform 侧会把 Linux 客户端认成 macOS。** 上游的客户端身份映射是
   `platform === 'win32' ? 'desktop-win' : 'desktop-mac'`，Linux 落到 `desktop-mac`。

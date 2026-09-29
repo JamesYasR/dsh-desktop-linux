@@ -149,10 +149,11 @@ Both tables below are kept up to date as reports come in — please tell us how 
 |---|---|
 | Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **Tested**, works |
 | Ubuntu 26.04 LTS · GNOME 50 · Wayland · x86_64 | **Tested**, works (Ubuntu ships the tray host) |
-| Debian 13 · GNOME 48 · Wayland · x86_64 | **Tested**, works (the tray needs an extra extension and a re-login, see [Known limitations](#known-limitations)) |
-| X11 (any distribution / desktop) | Not tested |
-| Other desktops (Hyprland, …) | Not tested |
-| Fedora / RHEL | Not tested |
+| Debian 13 · GNOME 48 · Wayland · x86_64 | **Tested**, works (the tray needs an extra extension, see [Known limitations](#known-limitations)) |
+| Fedora 44 Workstation · GNOME 50 · Wayland · x86_64 | **Tested**, works (the tray needs an extra extension, see [Known limitations](#known-limitations)) |
+| Other distributions (Linux Mint / CachyOS, …) | Not tested |
+| Other desktops / WMs (Xfce / Hyprland, …) | Not tested |
+| X11 | Not tested |
 | aarch64 | Not built, not tested |
 
 ### Artifacts
@@ -160,21 +161,21 @@ Both tables below are kept up to date as reports come in — please tell us how 
 | Artifact | Status |
 |---|---|
 | AppImage | **Tested**: built and launched |
-| `linux-unpacked` | **Tested**: `verify.sh --runtime` live matrix |
 | deb | **Tested**: `apt install` → launch → tray, window close → quit |
-| rpm | `rpm -qip` fields checked only — never installed or run on Fedora / RHEL |
+| rpm | **Tested**: `dnf install` → launch → tray, window close → quit |
 | Arch package | **Tested**: `makepkg` → `pacman -U` → launch, sandbox, uninstall |
+| `linux-unpacked` | **Tested**: `verify.sh --runtime` live matrix |
 
 ## Known limitations
 
 - **GNOME shows no tray by default — install the extension yourself.** The tray uses freedesktop
   StatusNotifierItem, and GNOME ships no host for it, so you need `gnome-shell-extension-appindicator`
-  (Ubuntu installs it by default; Debian needs its own `apt install`). Two traps after installing:
-  the extension's UUID is `ubuntu-appindicators@ubuntu.com` (that is the name in Debian 13's 59-4 —
+  (Ubuntu installs it by default; Debian needs its own `apt install` and Fedora its `dnf install`).
+  Two traps after installing: the extension's UUID is `ubuntu-appindicators@ubuntu.com` (that is the
+  name in Debian 13's 59-4 —
   the `appindicatorsupport@rgcjonas.gmail.com` of older docs is obsolete), and **newly installed
   extensions are not hot-loaded**, so you must log out and back in. Without a tray host the icon never
-  appears, and a hidden window can then only be recovered by launching the application again — the
-  old "silently running in the background" trap comes back.
+  appears, and a hidden window can then only be recovered by launching the application again.
 - **Electron is newer than the version upstream's lockfile pins (44.4.5).** Upstream's
   `apps/desktop/package.json` says `^44.0.0`, which the caret already allows, but its lockfile pins
   the resolution to 44.0.0 — and that version's **tray item registers on neither KDE nor GNOME**
@@ -186,6 +187,12 @@ Both tables below are kept up to date as reports come in — please tell us how 
   `desktop-win` / `desktop-mac` client identities, and Linux artifacts carry no
   update channel, so the Linux build embeds no policy, never polls, and never
   updates itself.
+- **No "install the command line tool" entry.** The official desktop offers one on macOS and Windows:
+  it puts the bundled `dsh` CLI on your PATH (a privileged symlink at `/usr/local/bin/dsh` on macOS, a
+  user PATH edit on Windows), and upstream implements only those two branches, so the Linux artifacts
+  have none. To use `dsh` in a terminal, install it yourself, or run the copy the application ships
+  (`resources/app/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js`, with the node under
+  `resources/runtime/primary-runtime`).
 - **Unsigned.** Artifacts are unsigned builds.
 - **Platform sees a Linux client as macOS.** Upstream maps client identity with
   `platform === 'win32' ? 'desktop-win' : 'desktop-mac'`, so Linux lands on
