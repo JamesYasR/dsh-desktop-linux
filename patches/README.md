@@ -5,8 +5,8 @@
 组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
 互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成。
 
-已验证：在 pristine worktree 上 14 个补丁按序 `git apply` 全部干净通过，
-结果与开发工作树逐字节一致（47 个文件全部 `cmp` 相同）。同一组补丁用
+已验证：在 pristine worktree 上 15 个补丁按序 `git apply` 全部干净通过，
+结果与开发工作树逐字节一致（48 个文件全部 `cmp` 相同）。同一组补丁用
 `patch -Np1` 打在上游 release 源码包（tag `dsh-v0.2.0-rc.1`）上也全部干净，
 这正是 PKGBUILD 的 `prepare()` 做的事。
 
@@ -55,6 +55,14 @@
 再把输出的 `resources/tray-linux.png` 拷进 `assets/`（图和 Windows 托盘同源，都是
 `resources/icon-windows.svg`）。
 
+## 让关窗提示在 Wayland 下真的显示出来（0015）
+
+| 补丁 | 覆盖文件 | 内容 |
+|---|---|---|
+| `0015-desktop-linux-hidden-overlay-reveal.patch` | `src/update-overlay.ts` | 提示浮层是 `transparent: true` + `show: false` 的子窗口，只在 `ready-to-show` 里 `show()`；而这种窗口在 Wayland 下不报告首帧，于是浮层建好了、内容也渲染对了，却始终 `isVisible() === false` —— 用户既看不到也点不到，关窗看起来像卡住。Linux 上再用 `did-finish-load` 兜一次 `reveal()`；Windows/macOS 的 `ready-to-show` 行为一字未动 |
+
+`0015` 是 `0013` 的下游：Linux 的首次关窗提示是 `0013` 打开的，而它用的正是这个浮层。
+
 ## 注意
 
 - **dev 模式也需要 `0001`**——`dev.ts` 虽然不走 `package-target.ts`，
@@ -73,6 +81,11 @@
   `package-target.ts:364` 无条件调 `readDesktopBuildCommit()`（没有出口，所以要 `0012`）。
   PKGBUILD 从 release 源码包构建，所以两个变量都由它显式给出，`_DIRTY=1` 也是事实——这个
   构建确实打了补丁。
+- **`0015` 的根因是量出来的，不是猜的。** 用 `--remote-debugging-port=9222 --inspect=9229` 起应用，
+  从主进程读 `BrowserWindow.getAllWindows()`：关窗后浮层窗口存在、`modal: true`、内容与按钮位置都对，
+  但 `isVisible()` 是 `false`；手动 `show()` 一次即正常显示且可用鼠标点。Debian 13（GNOME 48.7）与
+  Ubuntu 26.04（GNOME 50.1）都如此，打上 `0015` 后两边都变成 `true`，鼠标点 Confirm 能写入 marker 并隐藏窗口。
+  整个桌面端只有这一个窗口依赖 `ready-to-show`，所以只修这一处。
 - **托盘的依赖问题全在 ELF 之外。** 实测（Electron 44 二进制）：Linux 托盘走进程内的
   StatusNotifierItem（二进制里有 `StatusIconLinuxDbus`、`org.kde.StatusNotifierWatcher`），
   全库没有 `appindicator` 字样，`ldd` / `NEEDED` 里也没有，所以**不需要** libappindicator。

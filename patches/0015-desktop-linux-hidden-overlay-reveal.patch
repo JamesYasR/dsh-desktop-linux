@@ -1,0 +1,17 @@
+diff --git a/apps/desktop/src/update-overlay.ts b/apps/desktop/src/update-overlay.ts
+index 7706982..d37782c 100644
+--- a/apps/desktop/src/update-overlay.ts
++++ b/apps/desktop/src/update-overlay.ts
+@@ -55,7 +55,11 @@ export class DesktopUpdateOverlays {
+     }
+     parent.on('show', show)
+     window.once('closed', () => { parent.off('show', show) })
+-    window.once('ready-to-show', () => { ready = true; show() })
++    const reveal = (): void => { ready = true; show() }
++    window.once('ready-to-show', reveal)
++    // A transparent window created hidden never reports a first frame on Wayland, so ready-to-show
++    // never fires and the prompt stays invisible; the loaded document is enough to reveal it.
++    if (process.platform === 'linux') window.webContents.once('did-finish-load', reveal)
+     window.setMenu(null)
+     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+     return window

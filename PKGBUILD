@@ -17,7 +17,7 @@
 
 pkgname=dsh-desktop-linux
 pkgver=0.2.0rc1
-pkgrel=1
+pkgrel=2
 _tag='dsh-v0.2.0-rc.1'
 _commit='4878cdabd87d4041bdaff61d04c966883b9fd07a'
 # GitHub 源码包的顶层目录名 = <repo>-<tag>，tag 自带的 "v" 不剥（实测 dsh-v0.2.0-rc.1）
@@ -67,6 +67,7 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         '0012-desktop-build-commit-release-archive.patch'
         '0013-desktop-linux-tray.patch'
         '0014-electron-version-tray-fix.patch'
+        '0015-desktop-linux-hidden-overlay-reveal.patch'
         # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
         # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
         'tray-linux.png')
@@ -85,6 +86,7 @@ sha256sums=('fb995c05575a1381de30646a0a96dbc2988fd9e0db19dd92e0841f2721c6fe5b'
             'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715'
             '61de3413a9be63877e1dae7fd52fb017fcd6147697612de115527928ce574c15'
             '9c9a7e074c72143d573934a0f19423eebadb614f66cce6cd8b7fe7df07e65031'
+            '9496d3d4c4c9741a396c940bd0babd97e1d58111da31ba746cf0a6061825adba'
             'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 
 prepare() {
