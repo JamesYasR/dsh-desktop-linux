@@ -36,7 +36,7 @@ workspace build, then package with electron-builder.
 | Any | AppImage | Download from [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases), `chmod +x`, run it |
 | Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
 | Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
-| Arch Linux | PKGBUILD | Shipped in the repo, built locally with `makepkg` (**not published to the AUR**) — see [Arch package](#arch-package) |
+| Arch Linux | PKGBUILD | Shipped in the repo, built locally with `makepkg` (not published to the AUR) — see [Arch package](#arch-package) |
 
 Artifacts are **unsigned** builds (the file name carries `-unsigned`). Once
 installed, `dsh://` links are handed to it.
@@ -86,15 +86,10 @@ The PKGBUILD consumes upstream's release tarball and does not depend on the
 cd pkgbuild && makepkg -si
 ```
 
-`pkgbuild-dir.sh` is not optional sugar: **makepkg resolves local sources by basename
-inside the PKGBUILD's own directory**, so the PKGBUILD and the patches must sit
-flat together. `./pkgbuild` is exactly the shape makepkg can consume.
-
-This project is **not published to the AUR**; the PKGBUILD is for local builds only.
+This project is not published to the AUR; the PKGBUILD is for local builds only.
 
 The Arch package installs the unpacked tree into `/opt/deepseek-harness-desktop`
-and symlinks `/usr/bin/deepseek-harness` — on Arch there is no need to wrap it in
-an AppImage/deb/rpm.
+and symlinks `/usr/bin/deepseek-harness`.
 
 ## How it works
 
@@ -136,8 +131,6 @@ Upstream provides two ways back to a hidden window, but what its documentation c
 tray and the macOS Dock; **Linux had neither.** Patch `0013` adds the tray: the icon stays for the
 whole run and carries a tray menu. The tray menu's "Quit" goes through the same confirmation as the
 window menu bar's `Quit` and `Ctrl+Q` (it asks first when the Host has running or scheduled tasks).
-The first close shows a one-time native confirmation, as on Windows; once confirmed it writes the
-`background-close-confirmed` marker and never asks again.
 
 - The tray menu opens on a right click.
 - To really quit: the tray menu's "Quit", the `Application` → `Quit` menu item, or `Ctrl+Q`.
@@ -146,7 +139,7 @@ The first close shows a one-time native confirmation, as on Windows; once confir
 
 ## Validation status
 
-**There is only a single tested environment so far, and we intend to widen that coverage.**
+**Only a few environments have been tested so far, and we intend to widen that coverage.**
 Both tables below are kept up to date as reports come in — please tell us how it goes in
 [Issues](https://github.com/ffyfox/dsh-desktop-linux/issues), whether it works or not.
 
@@ -154,28 +147,34 @@ Both tables below are kept up to date as reports come in — please tell us how 
 
 | Environment | Status |
 |---|---|
-| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **Tested**, works (including the tray: the StatusNotifierItem registers, its menu holds Open and Quit, and quitting from that menu releases the process, the port, and the session write locks together) |
+| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **Tested**, works |
+| Ubuntu 26.04 LTS · GNOME 50 · Wayland · x86_64 | **Tested**, works (Ubuntu ships the tray host) |
+| Debian 13 · GNOME 48 · Wayland · x86_64 | **Tested**, works (the tray needs an extra extension and a re-login, see [Known limitations](#known-limitations)) |
 | X11 (any distribution / desktop) | Not tested |
-| Other desktops (GNOME, Hyprland, …) | Not tested |
-| Debian / Ubuntu, Fedora / RHEL | Not tested |
+| Other desktops (Hyprland, …) | Not tested |
+| Fedora / RHEL | Not tested |
 | aarch64 | Not built, not tested |
 
 ### Artifacts
 
 | Artifact | Status |
 |---|---|
-| Arch package | **Tested**: `makepkg` → `pacman -U` → launch, sandbox, uninstall |
 | AppImage | **Tested**: built and launched |
 | `linux-unpacked` | **Tested**: `verify.sh --runtime` live matrix |
-| deb | Control fields checked only — never installed or run on Debian / Ubuntu |
+| deb | **Tested**: `apt install` → launch → tray, window close → quit |
 | rpm | `rpm -qip` fields checked only — never installed or run on Fedora / RHEL |
+| Arch package | **Tested**: `makepkg` → `pacman -U` → launch, sandbox, uninstall |
 
 ## Known limitations
 
-- **GNOME shows no tray by default.** The tray uses freedesktop StatusNotifierItem, which GNOME
-  displays only with `gnome-shell-extension-appindicator` installed. Without a tray host the icon
-  never appears, and a hidden window can then only be recovered by launching the application again
-  — the old "silently running in the background" trap comes back.
+- **GNOME shows no tray by default — install the extension yourself.** The tray uses freedesktop
+  StatusNotifierItem, and GNOME ships no host for it, so you need `gnome-shell-extension-appindicator`
+  (Ubuntu installs it by default; Debian needs its own `apt install`). Two traps after installing:
+  the extension's UUID is `ubuntu-appindicators@ubuntu.com` (that is the name in Debian 13's 59-4 —
+  the `appindicatorsupport@rgcjonas.gmail.com` of older docs is obsolete), and **newly installed
+  extensions are not hot-loaded**, so you must log out and back in. Without a tray host the icon never
+  appears, and a hidden window can then only be recovered by launching the application again — the
+  old "silently running in the background" trap comes back.
 - **Electron is newer than the version upstream's lockfile pins (44.4.5).** Upstream's
   `apps/desktop/package.json` says `^44.0.0`, which the caret already allows, but its lockfile pins
   the resolution to 44.0.0 — and that version's **tray item registers on neither KDE nor GNOME**

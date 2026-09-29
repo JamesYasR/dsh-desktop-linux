@@ -31,7 +31,7 @@ release target."*）。本项目补的就是这一块：让官方打包流水线
 | 通用 | AppImage | 从 [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases) 下载，`chmod +x` 后直接运行 |
 | Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
 | Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
-| Arch Linux | PKGBUILD | 仓库自带，本地 `makepkg` 构建（**未发布到 AUR**），见 [Arch 包](#arch-包) |
+| Arch Linux | PKGBUILD | 仓库自带，本地 `makepkg` 构建（未发布到 AUR），见 [Arch 包](#arch-包) |
 
 产物是 **unsigned** 构建（文件名里带 `-unsigned`）。安装后 `dsh://` 链接会交给它处理。
 
@@ -74,13 +74,9 @@ PKGBUILD 直接吃上游的 release 源码包，不依赖 `./upstream` 检出：
 cd pkgbuild && makepkg -si
 ```
 
-`pkgbuild-dir.sh` 不是可有可无的糖：**makepkg 只在 PKGBUILD 所在目录里按 basename 找本地 source**，
-所以 PKGBUILD 与补丁必须平铺在一起。`./pkgbuild` 里的内容就是 makepkg 能直接吃的形态。
+本项目不发布到 AUR，PKGBUILD 只用于本地构建。
 
-本项目**不发布到 AUR**，PKGBUILD 只用于本地构建。
-
-Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/deepseek-harness` 是符号链接——
-Arch 上不需要再套一层 AppImage/deb/rpm。
+Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/deepseek-harness` 是符号链接。
 
 ## 它是怎么工作的
 
@@ -112,8 +108,7 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
 
 上游给「回到隐藏窗口」准备了两条路，但文档里写到的只有 Windows 的托盘和 macOS 的 Dock，
 **Linux 原本一条都没有**。补丁 `0013` 把托盘补上：图标常驻，带托盘菜单。托盘菜单「退出」走与窗口
-菜单栏 `Quit`、`Ctrl+Q` 相同的确认流程（Host 有在跑的任务或定时任务时会先问一次）。第一次关窗会弹
-一次原生提示，与 Windows 一致；确认后写 `background-close-confirmed` 标记，以后不再问。
+菜单栏 `Quit`、`Ctrl+Q` 相同的确认流程（Host 有在跑的任务或定时任务时会先问一次）。
 
 - 托盘菜单：右键点图标弹出。
 - 真正退出：托盘右键菜单的「退出」、菜单栏 `Application` → `Quit`、或 `Ctrl+Q`。
@@ -121,7 +116,7 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
 
 ## 验证状态
 
-**目前只有单一实测环境，后续会尽可能拓展测试范围。** 下面两张表随反馈更新——欢迎在
+**当前实测环境较少，后续会尽可能拓展。** 下面两张表随反馈更新——欢迎在
 [Issues](https://github.com/ffyfox/dsh-desktop-linux/issues) 报告你的结果，能用和不能用
 都欢迎。
 
@@ -129,26 +124,31 @@ Arch 上不需要再套一层 AppImage/deb/rpm。
 
 | 环境 | 状态 |
 |---|---|
-| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **已实测**，正常（含托盘：StatusNotifierItem 注册成功，菜单里有「打开」与「退出」，从菜单退出后进程、端口与会话写锁一起释放） |
+| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **已实测**，正常 |
+| Ubuntu 26.04 LTS · GNOME 50 · Wayland · x86_64 | **已实测**，正常（托盘宿主 Ubuntu 自带） |
+| Debian 13 · GNOME 48 · Wayland · x86_64 | **已实测**，正常（托盘要装扩展并重登，见[已知限制](#已知限制)） |
 | X11（任意发行版 / 桌面环境） | 未验证 |
-| 其他桌面环境（GNOME、Hyprland 等） | 未验证 |
-| Debian / Ubuntu、Fedora / RHEL | 未验证 |
+| 其他桌面环境（Hyprland 等） | 未验证 |
+| Fedora / RHEL | 未验证 |
 | aarch64 | 未构建、未验证 |
 
 ### 产物
 
 | 产物 | 状态 |
 |---|---|
-| Arch 包 | **已实测**：`makepkg` → `pacman -U` 安装 → 启动、沙箱、卸载 |
 | AppImage | **已实测**：构建并起窗口 |
 | `linux-unpacked` | **已实测**：`verify.sh --runtime` 活体矩阵 |
-| deb | 只核对过 control 字段，未在 Debian / Ubuntu 上安装运行 |
+| deb | **已实测**：`apt install` → 启动 → 托盘、关窗 → 退出 |
 | rpm | 只核对过 `rpm -qip` 字段，未在 Fedora / RHEL 上安装运行 |
+| Arch 包 | **已实测**：`makepkg` → `pacman -U` 安装 → 启动、沙箱、卸载 |
 
 ## 已知限制
 
-- **GNOME 默认看不到托盘。** 托盘走 freedesktop 的 StatusNotifierItem，GNOME 要装
-  `gnome-shell-extension-appindicator` 才会显示。没有托盘宿主时图标不会出现，关窗后就只能靠二次
+- **GNOME 默认看不到托盘，要自己装扩展。** 托盘走 freedesktop 的 StatusNotifierItem，GNOME 本体
+  不提供宿主，装 `gnome-shell-extension-appindicator` 才有（Ubuntu 默认已装，Debian 要自己
+  `apt install`）。装完还有两个坑：扩展 UUID 是 `ubuntu-appindicators@ubuntu.com`（Debian 13 的
+  59-4 就是这个名字，旧文档里的 `appindicatorsupport@rgcjonas.gmail.com` 已废弃），而且**新装的
+  扩展不会热加载**，得注销重登才生效。没有托盘宿主时图标不会出现，关窗后就只能靠二次
   启动把窗口找回——也就是「关窗即静默消失」那个老问题会回来。
 - **Electron 版本比上游 lockfile 钉的高（44.4.5）。** 上游 `apps/desktop/package.json` 写的是
   `^44.0.0`，caret 本来就允许；但它的 lockfile 把解析钉死在 44.0.0，而那个版本的**托盘项在 KDE 与
