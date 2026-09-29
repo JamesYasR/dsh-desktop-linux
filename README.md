@@ -137,7 +137,7 @@ Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/
 
 | 产物 | 状态 |
 |---|---|
-| AppImage | **已实测**：构建并起窗口 |
+| AppImage | **已实测**：`chmod +x` → 启动 → 托盘、关窗 → 退出 |
 | deb | **已实测**：`apt install` → 启动 → 托盘、关窗 → 退出 |
 | rpm | **已实测**：`dnf install` → 启动 → 托盘、关窗 → 退出 |
 | Arch 包 | **已实测**：`makepkg` → `pacman -U` 安装 → 启动、沙箱、卸载 |
@@ -152,6 +152,12 @@ Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/
   `appindicatorsupport@rgcjonas.gmail.com` 已废弃），而且**新装的
   扩展不会热加载**，得注销重登才生效。没有托盘宿主时图标不会出现，关窗后就只能靠二次
   启动把窗口找回。
+- **AppImage 要系统提供 FUSE 2（`libfuse.so.2`）。** 主流发行版现在默认只装 FUSE 3（Debian 13、
+  Ubuntu 26.04、Fedora 44 实测都只有 `libfuse3.so.3`），直接运行会报
+  `dlopen(): error loading libfuse.so.2`。装对应包即可：Fedora `sudo dnf install fuse-libs`、
+  Debian 13 与 Ubuntu 24.04+ `sudo apt install libfuse2t64`（Ubuntu 22.04 是 `libfuse2`）；
+  或 `APPIMAGE_EXTRACT_AND_RUN=1 ./deepseek-harness-*.AppImage` 绕过（解包到 /tmp，多占约 1.2 G）。
+  deb / rpm / Arch 包不受影响。
 - **Electron 版本比上游 lockfile 钉的高（44.4.5）。** 上游 `apps/desktop/package.json` 写的是
   `^44.0.0`，caret 本来就允许；但它的 lockfile 把解析钉死在 44.0.0，而那个版本的**托盘项在 KDE 与
   GNOME 下都注册不上**（上游回归 [electron#53213](https://github.com/electron/electron/issues/53213)，

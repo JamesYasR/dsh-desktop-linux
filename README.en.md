@@ -160,7 +160,7 @@ Both tables below are kept up to date as reports come in — please tell us how 
 
 | Artifact | Status |
 |---|---|
-| AppImage | **Tested**: built and launched |
+| AppImage | **Tested**: `chmod +x` → launch → tray, window close → quit |
 | deb | **Tested**: `apt install` → launch → tray, window close → quit |
 | rpm | **Tested**: `dnf install` → launch → tray, window close → quit |
 | Arch package | **Tested**: `makepkg` → `pacman -U` → launch, sandbox, uninstall |
@@ -176,6 +176,13 @@ Both tables below are kept up to date as reports come in — please tell us how 
   the `appindicatorsupport@rgcjonas.gmail.com` of older docs is obsolete), and **newly installed
   extensions are not hot-loaded**, so you must log out and back in. Without a tray host the icon never
   appears, and a hidden window can then only be recovered by launching the application again.
+- **The AppImage needs FUSE 2 (`libfuse.so.2`) on the system.** Mainstream distributions now install
+  only FUSE 3 (Debian 13, Ubuntu 26.04 and Fedora 44 all ship just `libfuse3.so.3`), so running it
+  stops at `dlopen(): error loading libfuse.so.2`. Install the matching package — Fedora
+  `sudo dnf install fuse-libs`, Debian 13 and Ubuntu 24.04+ `sudo apt install libfuse2t64`
+  (`libfuse2` on Ubuntu 22.04) — or bypass the mount with
+  `APPIMAGE_EXTRACT_AND_RUN=1 ./deepseek-harness-*.AppImage` (extracts to /tmp, about 1.2G extra).
+  The deb, rpm and Arch packages are unaffected.
 - **Electron is newer than the version upstream's lockfile pins (44.4.5).** Upstream's
   `apps/desktop/package.json` says `^44.0.0`, which the caret already allows, but its lockfile pins
   the resolution to 44.0.0 — and that version's **tray item registers on neither KDE nor GNOME**
