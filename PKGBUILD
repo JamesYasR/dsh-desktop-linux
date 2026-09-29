@@ -16,10 +16,10 @@
 # pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
 
 pkgname=dsh-desktop-linux
-pkgver=0.2.0rc1
-pkgrel=2
-_tag='dsh-v0.2.0-rc.1'
-_commit='4878cdabd87d4041bdaff61d04c966883b9fd07a'
+pkgver=0.2.0rc2
+pkgrel=1
+_tag='dsh-v0.2.0-rc.2'
+_commit='639ed015397290b3745d163aafe02ffee4aa3f84'
 # GitHub 源码包的顶层目录名 = <repo>-<tag>，tag 自带的 "v" 不剥（实测 dsh-v0.2.0-rc.1）
 _srcdirname="deepseek-harness-$_tag"
 
@@ -71,21 +71,21 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
         # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
         'tray-linux.png')
-sha256sums=('fb995c05575a1381de30646a0a96dbc2988fd9e0db19dd92e0841f2721c6fe5b'
+sha256sums=('c126f2f5dc56820e62d07e52eba6455cc20fffb379fc876626993452d86d4010'
             '67a38b25575b2e4f3075eb0a516636db22795895eacf5ae9b6f3c13693a22f23'
-            '9bb07dc990ed6855977a5f84e93aab918e2fc54fdb0a904ca02bb82843b8fabd'
+            '61fdd67082c398f05f4d879248aa7cde9d42edd53f395f017b7d741a68a40712'
             '89ea7df4edbd9adb7f31cd3ae4e74e49a18922e721d57b825a516ca6fe09cf1d'
-            'a69154978f2383dee412069f2f8ebd4889293bf1e6528a6731fde9a2b6ee8289'
+            '9a98b425de64adc0ee5cf1ab93d548ac7e37b81e461a6a2ebde6691390931619'
             '528b0ba6334fa4d3003756ee921708753204fc265a40e406ecbf25456cce9fe5'
-            '57ad7aa51c120cb06822e5d7532b84e88c40ab3e17190bce04b6e2cb0be2c847'
+            '91327c8ae2fea8980dbc17a5e8c97c2e27fd26fb4e8f7185ab6920dc7f6237d9'
             'b78a49f2ca34679f78aad141f3d99ee74bec205b60d19b26fe9a1f0e69f88f2b'
-            '7ba1cff3b680679d81a28d49dc5790913ba2164d52b7bec4003cb573eaff1bff'
+            '891c43fdb2991cd6a5ac2704d3fd09614e2ed3468639433ba8217b4311e1ea77'
             '62fca9bb192ccc7114f58b14245701a5b765cb16e46ec730c59e73570b87dbfd'
             '062567a5bcd5f4d8e63368a98927055358318f428c88fb851846d64fb859db8e'
             'a3ff4a524a4ebe28551797bd36dab7b7139516e668462f054e616e8a521e3e8f'
             'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715'
-            '61de3413a9be63877e1dae7fd52fb017fcd6147697612de115527928ce574c15'
-            '9c9a7e074c72143d573934a0f19423eebadb614f66cce6cd8b7fe7df07e65031'
+            '042117088d416a602985e595e768b2d921e98b64477eaa6a04383a958ae79ba3'
+            '816d08f621331b5120ba00b956bbf6ce7b9d157c0072eb74967647711da421fa'
             '9496d3d4c4c9741a396c940bd0babd97e1d58111da31ba746cf0a6061825adba'
             'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 
@@ -143,10 +143,35 @@ build() {
 DSH_DESKTOP_APP_ID=com.deepseek.harness
 EOF
 
+  # 发布设置只能来自文件（环境里的同名变量会被 desktop-package-environment 剥掉），所以要让
+  # 构建期内部的 pnpm 走镜像源、必须写进 .env.linux。打包者用环境变量传入，不传则保持上游默认
+  # （registry.npmjs.org —— 本机实测单条请求要 30–40 秒，payload 安装会直接超时失败）：
+  #   DSH_DESKTOP_NPM_REGISTRY=https://registry.npmmirror.com makepkg -C -s --nocheck
+  if [[ -n "${DSH_DESKTOP_NPM_REGISTRY:-}" ]]; then
+    printf 'DSH_DESKTOP_NPM_REGISTRY=%s\n' "$DSH_DESKTOP_NPM_REGISTRY" >> apps/desktop/.env.linux
+  fi
+
   pnpm install --frozen-lockfile
+
+  # 可选：复用一份已有的打包流水线下载缓存。流水线自己的缓存是树内的
+  # apps/desktop/.desktop-build/downloads/（键 = 资产内容的 sha256，Electron 那条是下载 URL 的
+  # sha256），而 makepkg 每次从源码包重建这棵树，所以默认每次都要重下 Electron（~117MB）与
+  # primary-runtime 的 Node/Python/wheels（~110MB）。指向一份已有的 downloads 目录即可跳过：
+  #   DSH_DESKTOP_LINUX_DOWNLOAD_CACHE=/path/to/.desktop-build/downloads makepkg -C -s --nocheck
+  # 不设这个变量时行为完全不变；设了也只是 cp -n，绝不覆盖已有文件。
+  if [[ -n "${DSH_DESKTOP_LINUX_DOWNLOAD_CACHE:-}" ]]; then
+    install -d apps/desktop/.desktop-build/downloads
+    cp -an "$DSH_DESKTOP_LINUX_DOWNLOAD_CACHE/." apps/desktop/.desktop-build/downloads/
+  fi
 
   # Electron 二进制（~117MB）平时由 require('electron') 首次自动下载到 ~/.cache/electron。
   # 这里显式预热一次，让下载失败发生在构建前，而不是打包流水线中途。
+  #
+  # 注意：@electron/get 即使在缓存命中时也会回源拉同源的 SHASUMS256.txt 校验，所以要打到
+  # GitHub releases 的网络不通（实测 curl 直连/代理都超时）时这一步会以 `TypeError: fetch failed`
+  # 失败。此时在 makepkg 前加一个镜像变量即可，缓存键随 URL 变、命中后只多拉那份 6.7KB 清单：
+  #   ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ makepkg -C -s --nocheck
+  # 该镜像的清单与 GitHub 官方那份逐字节相同，CI（GitHub runner）不需要这个变量。
   node apps/desktop/node_modules/electron/install.js
 
   # 只要未打包目录：Arch 包直接把 linux-unpacked 装进 /opt，不需要再套一层 AppImage/deb/rpm。

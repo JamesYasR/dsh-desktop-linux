@@ -112,10 +112,10 @@ index c2a0007..64053e4 100644
  import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
  import { dirname } from 'node:path'
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index fcc1f54..1684fd1 100644
+index b4b8153..bdd8aac 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -954,15 +954,22 @@ async function main(): Promise<void> {
+@@ -981,15 +981,22 @@ async function main(): Promise<void> {
      tray?.relabel()
    }
    refreshApplicationMenu()

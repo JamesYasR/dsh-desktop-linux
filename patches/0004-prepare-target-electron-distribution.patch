@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/prepare-dsh.ts b/apps/desktop/scripts/prepare-dsh.ts
-index 377c300..593137a 100644
+index 442e017..d32459c 100644
 --- a/apps/desktop/scripts/prepare-dsh.ts
 +++ b/apps/desktop/scripts/prepare-dsh.ts
 @@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
@@ -15,7 +15,7 @@ index 377c300..593137a 100644
  import {
    signMacOSRuntime,
  } from './macos-runtime.ts'
--import { resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
+-import { desktopTargetPlatform, resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 +import { desktopElectronExecutablePath, desktopTargetPlatform, resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
  import { desktopRuntimeFileExclusion } from './runtime-file-policy.ts'
  import { selectOfficeEngine } from '../../../scripts/libreoffice-packages.mjs'
@@ -60,7 +60,7 @@ index 377c300..593137a 100644
      await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:install', () => runPnpm(['install', '--prod', '--frozen-lockfile', '--trust-lockfile']))
      const packageSet = readDesktopCorePackageSet(BUILD_ROOT, release.version)
 -    const targetName = resolveDesktopBuildTarget()
--    const target = { platform: process.platform, arch: targetName.endsWith('arm64') ? 'arm64' : 'x64' }
+-    const target = { platform: process.platform, arch: desktopTargetPlatform(targetName).arch }
 +    const target = desktopTargetPlatform(TARGET)
      const modules = join(BUILD_ROOT, 'node_modules')
      const officeManifest = JSON.parse(readFileSync(join(modules, '@deepseek-ai/libreoffice-kit/package.json'), 'utf8'))
@@ -75,7 +75,7 @@ index 377c300..593137a 100644
      }
    } catch (error) {
 diff --git a/apps/desktop/scripts/prepare-runtime.ts b/apps/desktop/scripts/prepare-runtime.ts
-index 04ddd93..6ae5a3f 100644
+index 1b88f09..9da30c6 100644
 --- a/apps/desktop/scripts/prepare-runtime.ts
 +++ b/apps/desktop/scripts/prepare-runtime.ts
 @@ -8,7 +8,8 @@ import { dirname, join } from 'node:path'
@@ -86,9 +86,9 @@ index 04ddd93..6ae5a3f 100644
 +import { desktopElectronExecutablePath, desktopTargetPlatform, resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 +import { desktopNodeRuntime } from '../src/node-environment.ts'
  import { preparePrimaryRuntime } from './prepare-primary-runtime.ts'
- 
- const BUILD_PATHS = resolveDesktopTargetBuildPaths()
-@@ -29,16 +30,15 @@ function preparePnpm(): string {
+ import { prepareDesktopCli } from './prepare-cli.ts'
+ import { prepareCommandLink } from './prepare-command-link.ts'
+@@ -31,16 +32,15 @@ function preparePnpm(): string {
  async function main(): Promise<void> {
    const { values } = parseArgs({ options: { 'defer-primary-runtime-smoke': { type: 'boolean', default: false } } })
    const target = resolveDesktopBuildTarget()
@@ -107,8 +107,8 @@ index 04ddd93..6ae5a3f 100644
 +  const electronNodeVersion = execFileSync(executable, ['-p', 'process.versions.node'], {
      encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
    }).trim()
-   rmSync(RUNTIME_ROOT, { recursive: true, force: true })
-@@ -46,13 +46,18 @@ async function main(): Promise<void> {
+   const macosMinimumVersion = platform === 'darwin' ? execFileSync('/usr/libexec/PlistBuddy',
+@@ -50,18 +50,29 @@ async function main(): Promise<void> {
    const pnpmVersion = preparePnpm()
    cpSync(join(import.meta.dirname, 'node-bin'), join(RUNTIME_ROOT, 'bin'), { recursive: true })
    chmodSync(join(RUNTIME_ROOT, 'bin', 'node'), 0o755)
@@ -124,8 +124,24 @@ index 04ddd93..6ae5a3f 100644
      node: nodeVersion,
      pnpm: pnpmVersion,
    }, undefined, 2)}\n`)
+-  await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:cli',
+-    async () => prepareDesktopCli(join(RUNTIME_ROOT, 'cli'), platform))
+-  if (macosMinimumVersion !== undefined) prepareCommandLink(join(RUNTIME_ROOT, 'cli'), arch, macosMinimumVersion)
+-  cpSync(join(import.meta.dirname, '..', 'lib', 'command-manager-entry.js'), join(RUNTIME_ROOT, 'cli', 'command-manager.js'))
+-  cpSync(join(import.meta.dirname, 'command-path.ps1'), join(RUNTIME_ROOT, 'cli', 'command-path.ps1'))
 -  await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:primary-runtime',
 -    () => preparePrimaryRuntime({ deferSmoke: values['defer-primary-runtime-smoke'] }))
++  // The terminal launcher and its helpers are macOS and Windows only: upstream offers the command
++  // manager there (main.ts gates its menu entry the same way), the shipped `cli/dsh` is a macOS shell
++  // script that execs the bundle through `../MacOS/`, and `link-entry` is compiled by clang. Linux
++  // prepares no `runtime/cli`, so a Linux build must not copy the macOS launcher into the payload.
++  if (platform !== 'linux') {
++    await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:cli',
++      async () => prepareDesktopCli(join(RUNTIME_ROOT, 'cli'), platform))
++    if (macosMinimumVersion !== undefined) prepareCommandLink(join(RUNTIME_ROOT, 'cli'), arch, macosMinimumVersion)
++    cpSync(join(import.meta.dirname, '..', 'lib', 'command-manager-entry.js'), join(RUNTIME_ROOT, 'cli', 'command-manager.js'))
++    cpSync(join(import.meta.dirname, 'command-path.ps1'), join(RUNTIME_ROOT, 'cli', 'command-path.ps1'))
++  }
  }
  
  await main()
