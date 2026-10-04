@@ -16,11 +16,11 @@
 # pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
 
 pkgname=dsh-desktop-linux
-pkgver=0.2.0rc2
+pkgver=0.2.1alpha1
 pkgrel=1
-_tag='dsh-v0.2.0-rc.2'
-_commit='639ed015397290b3745d163aafe02ffee4aa3f84'
-# GitHub 源码包的顶层目录名 = <repo>-<tag>，tag 自带的 "v" 不剥（实测 dsh-v0.2.0-rc.1）
+_tag='dsh-v0.2.1-alpha.1'
+_commit='5badb15009ae1756c3afe0aecef1faafc290ccc'
+# GitHub 源码包的顶层目录名 = <repo>-<tag>，tag 自带的 "v" 不剥（实测 dsh-v0.2.1-alpha.1）
 _srcdirname="deepseek-harness-$_tag"
 
 pkgdesc='Official DeepSeek Harness desktop application (Electron shell around a bundled dsh runtime)'
@@ -71,21 +71,21 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
         # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
         'tray-linux.png')
-sha256sums=('c126f2f5dc56820e62d07e52eba6455cc20fffb379fc876626993452d86d4010'
+sha256sums=('b307d140074f0aab57d053a2a459efe40e1796e07a2ae3ba71dd178e39b2afa1'
             '67a38b25575b2e4f3075eb0a516636db22795895eacf5ae9b6f3c13693a22f23'
             '61fdd67082c398f05f4d879248aa7cde9d42edd53f395f017b7d741a68a40712'
             '89ea7df4edbd9adb7f31cd3ae4e74e49a18922e721d57b825a516ca6fe09cf1d'
             '9a98b425de64adc0ee5cf1ab93d548ac7e37b81e461a6a2ebde6691390931619'
             '528b0ba6334fa4d3003756ee921708753204fc265a40e406ecbf25456cce9fe5'
-            '91327c8ae2fea8980dbc17a5e8c97c2e27fd26fb4e8f7185ab6920dc7f6237d9'
+            '188c28b94fdd829f6d8cf8748d19d0d152cf9144ef8f3c51c2e5fd651a34507a'
             'b78a49f2ca34679f78aad141f3d99ee74bec205b60d19b26fe9a1f0e69f88f2b'
-            '891c43fdb2991cd6a5ac2704d3fd09614e2ed3468639433ba8217b4311e1ea77'
+            '99465978a5313900c2722dea2b48463b0bb969a96c1c0b1591d371b052f9ea9a'
             '62fca9bb192ccc7114f58b14245701a5b765cb16e46ec730c59e73570b87dbfd'
             '062567a5bcd5f4d8e63368a98927055358318f428c88fb851846d64fb859db8e'
             'a3ff4a524a4ebe28551797bd36dab7b7139516e668462f054e616e8a521e3e8f'
             'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715'
             '042117088d416a602985e595e768b2d921e98b64477eaa6a04383a958ae79ba3'
-            '816d08f621331b5120ba00b956bbf6ce7b9d157c0072eb74967647711da421fa'
+            '702830e40816183cfaf2bc800957dbc93e90e0324eb93454f3ac01d3ce6cd1d9'
             '9496d3d4c4c9741a396c940bd0babd97e1d58111da31ba746cf0a6061825adba'
             'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 

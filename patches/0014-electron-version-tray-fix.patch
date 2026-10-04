@@ -1,8 +1,8 @@
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index 6c7ce04..ed87ffa 100644
+index 0ee904d..41e184b 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
-@@ -656,7 +656,7 @@ importers:
+@@ -671,7 +671,7 @@ importers:
          version: 3.0.0
        electron:
          specifier: ^44.0.0
@@ -11,7 +11,7 @@ index 6c7ce04..ed87ffa 100644
        electron-builder:
          specifier: ^26.15.3
          version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
-@@ -18809,8 +18809,8 @@ packages:
+@@ -19040,8 +19040,8 @@ packages:
      resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
      engines: {node: '>=8.0.0'}
  
@@ -22,7 +22,7 @@ index 6c7ce04..ed87ffa 100644
      engines: {node: '>= 22.12.0'}
      hasBin: true
  
-@@ -26068,7 +26068,7 @@ snapshots:
+@@ -26302,7 +26302,7 @@ snapshots:
      transitivePeerDependencies:
        - supports-color
  

@@ -15,7 +15,7 @@ index 615270a..d005dd5 100644
      child.disconnect()
      const exitCode = await exited
 diff --git a/apps/desktop-host/src/index.ts b/apps/desktop-host/src/index.ts
-index 4a47a92..691c191 100644
+index dd8f57c..325d2b6 100644
 --- a/apps/desktop-host/src/index.ts
 +++ b/apps/desktop-host/src/index.ts
 @@ -33,7 +33,12 @@ async function main(): Promise<void> {

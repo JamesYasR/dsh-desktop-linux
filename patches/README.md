@@ -1,20 +1,21 @@
 # 补丁
 
-按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `639ed01`（tag `dsh-v0.2.0-rc.2`）。
+按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `5badb15`（tag `dsh-v0.2.1-alpha.1`）。
 
 组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
 互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成；
 两个补丁共用一个文件时（`electron-builder-config.mjs` 属 0003 与 0013，`src/main.ts` 属 0008 与 0013），
 必须按「基线 + 只有这一个补丁」的隔离树取 diff，否则会把另一个补丁的 hunk 一起带进来。
 
-已验证（rc.2）：15 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.0-rc.2`）上，
-`patch -Np1` 与 `git apply` 都干净通过，48 个触及文件与开发工作树逐字节一致；
-`pnpm install --frozen-lockfile` 与 `pnpm run build:official` 在同一棵树上通过，
-`makepkg` 也整包构建成功（`dsh-desktop-linux-0.2.0rc2-1`，产物里 `resources/runtime/cli` 不存在，
-正是 0004 的 Linux 闸门在起作用）。
-rc.1 → rc.2 只有 6 个文件变过（`pnpm-lock.yaml`、`src/main.ts`、`desktop-upload-plan.ts`、
-`prepare-runtime.ts`、`prepare-dsh.ts`、`apps/desktop/package.json`），对应
-0002 / 0004 / 0006 / 0008 / 0013 / 0014 六个补丁重生，其余 9 个逐字节未动。
+已验证（0.2.1-alpha.1）：15 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.1`）上，
+`patch -Np1`（makepkg 的 `prepare()`）与 `git apply`（`apply-patches.sh` / CI）都干净通过，
+49 个触及文件（44 个改动 + 5 个新增）与开发工作树逐字节一致；源码包本身也与 git 对象核对过
+（14194 个文件逐字节一致）。`pnpm install --frozen-lockfile` 与整条打包流水线在这棵树上通过，
+`build.sh --all` 出齐 AppImage/deb/rpm（0.2.1-alpha.1，electron 44.4.5），`makepkg` 也整包构建成功
+（`dsh-desktop-linux-0.2.1alpha1-1`，25921 个文件）；产物里 `resources/runtime/cli` 不存在，
+正是 0004 的 Linux 闸门在起作用。
+rc.2 → 0.2.1-alpha.1 只有 3 个文件变过（`pnpm-lock.yaml`、`apps/desktop-host/src/index.ts`、
+`apps/desktop/package.json`），对应 0006 / 0008 / 0014 三个补丁重生，其余 12 个逐字节未动。
 
 ## 让 Linux 成为受支持的 target（0001–0007）
 
