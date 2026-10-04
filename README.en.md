@@ -120,22 +120,17 @@ Three design points worth knowing:
 
 ### Closing, the tray, and quitting
 
-**Closing the window is not quitting — that is upstream's design.** Upstream
-`main.ts` intercepts the main window's `close` and hides it instead: the Host keeps running, tasks
-are not interrupted, and session write locks are not released (one kernel flock per session, with
-deliberately no expiry). So after a close, another DSH instance — a terminal `dsh web`, say — that
-opens the same session gets the official message "This session is already in use, possibly by
-another running DSH instance … Quit other running DSH instances and try again."
+**Closing the window does not fully quit the application — that is upstream's design.** Upstream
+`main.ts` intercepts the main window's `close` and **hides** it instead: the Host keeps running,
+tasks in progress are not interrupted, and session write locks are not released.
 
-Upstream provides two ways back to a hidden window, but what its documentation covers is the Windows
-tray and the macOS Dock; **Linux had neither.** Patch `0013` adds the tray: the icon stays for the
-whole run and carries a tray menu. The tray menu's "Quit" goes through the same confirmation as the
-window menu bar's `Quit` and `Ctrl+Q` (it asks first when the Host has running or scheduled tasks).
+Upstream provides no Linux path to **"get back to the hidden window"** or to
+**"fully quit the application"**. Following upstream's implementation on the other platforms,
+patch `0013` adds the tray: the icon stays for the whole run and carries a tray menu.
 
-- The tray menu opens on a right click.
+- To get the window back: the tray menu's "Open", or launch the application again (a second launch
+  only focuses the instance that is already running).
 - To really quit: the tray menu's "Quit", the `Application` → `Quit` menu item, or `Ctrl+Q`.
-- To get the window back: launch the application again (a second launch only focuses the instance
-  that is already running).
 
 ## Validation status
 

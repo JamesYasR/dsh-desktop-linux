@@ -22,6 +22,11 @@ node_modules/
 # PKGBUILD 摊平目录（由 scripts/pkgbuild-dir.sh 生成）
 /pkgbuild/
 
+# 在仓库里跑 makepkg 的副作用：源码包解到 pkgbuild/src/ 之后，lefthook 这个 npm 包自己的
+# postinstall 会执行 `lefthook install`；它从 cwd 往上找 git 仓库（源码包里没有 .git）就落到
+# 本仓库，配置只在 git 根找，于是在仓库根写下这份模板（CI 里它见到 CI 环境变量直接 return）
+/lefthook.yml
+
 # 本机专用的指令 overlay（AGENTS.md 的本地补充）
 AGENTS.local.md
 CLAUDE.local.md
