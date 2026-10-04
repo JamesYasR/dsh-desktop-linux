@@ -55,7 +55,38 @@ CLI="$APPDSH/node_modules/@deepseek-ai/dsh/lib/bin.js"
 # 探测用的 node：用系统 node 读 built lib，不依赖产物里那份运行时。
 NODE="$(command -v node || true)"
 
-# 当前基线的版本：PKGBUILD 的 _tag 去掉 "dsh-v" 前缀（dsh-v0.2.0-rc.1 → 0.2.0-rc.1）。产物文件名、
+# 本次活体运行里 Web Host 实际监听的 127.0.0.1 端口（没有则返回非零）。
+#
+# 上游 0.2.1-alpha.1 起，桌面端默认端口从固定 19387 改成系统分配（apps/desktop-host 传
+# `--port 0`，为的是避让 Windows 的保留端口段），所以「起没起来」不能再按固定端口判断 ——
+# 那样只会等到超时。首选读应用自己打出来的那行 URL（`dsh web: http://127.0.0.1:<port>/?token=…`，
+# rc.2 与 0.2.1 的日志里都是这个格式，它出现就意味着 Host 已经在监听）。
+#
+# 读不到才退回问监听表：谁是本产物 primary-runtime 那份 Node（Linux 上 Host 跑在它上面，见 0008）。
+# 退回时必须排掉 Electron 自己的监听 —— 它把 CDP 套接字的 fd 继承给了 Host 子进程，于是那个端口在
+# `ss` 里同时挂在 Electron 主进程与 Host 两个 pid 上（实测 Electron 的 9223 就是这样），
+# 只按「Host 的 pid 在监听」去找会把它误认成 Web Host，端口就报错了。
+desktop_host_port() {
+  local p exe addr port
+  if [[ -n "${LIVE:-}" && -f "$LIVE/app.log" ]]; then
+    port="$(sed -n 's|.*dsh web: http://127\.0\.0\.1:\([0-9][0-9]*\).*|\1|p' "$LIVE/app.log" | head -1)"
+    [[ -n "$port" ]] && { printf '%s' "$port"; return 0; }
+  fi
+  for p in $(pgrep -f 'dsh-desktop-host' 2>/dev/null); do
+    exe="$(readlink -f "/proc/$p/exe" 2>/dev/null)"
+    [[ "$exe" == "$(readlink -f "$PRIMARY_NODE")" ]] || continue
+    while read -r addr; do
+      port="${addr##*:}"
+      if [[ -n "${APP_PID:-}" ]] && ss -ltnpH 2>/dev/null | grep -qE "127\.0\.0\.1:$port[^0-9].*pid=$APP_PID,"; then
+        continue
+      fi
+      printf '%s' "$port"; return 0
+    done < <(ss -ltnpH 2>/dev/null | grep -F "pid=$p," | awk '$4 ~ /^127\.0\.0\.1:/ {print $4}')
+  done
+  return 1
+}
+
+# 当前基线的版本：PKGBUILD 的 _tag 去掉 "dsh-v" 前缀（dsh-v0.2.1-alpha.1 → 0.2.1-alpha.1）。产物文件名、
 # 打包后的 package.json 用的都是这个版本。
 #
 # 为什么需要它：只跑了 build.sh --dir 时，$OUT 里还留着上一版基线的 AppImage/deb/rpm，原先的静态
@@ -250,12 +281,23 @@ if (( RUNTIME )); then
   echo "== 6. 活体矩阵（--runtime）=="
   if [[ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
     skip "没有显示器（WAYLAND_DISPLAY 与 DISPLAY 都为空）"
-  elif ss -ltn 2>/dev/null | grep -q ':19387'; then
-    skip "19387 已被占用（可能已经有一个桌面端在跑）"
   else
     APP="$UNPACKED/deepseek-harness"
     LIVE="$(mktemp -d /tmp/dsh-verify-live-XXXXXX)"
     CDP_PORT=9223
+
+    # 已经有别的桌面端在跑不再是障碍。Electron 的单实例锁（apps/desktop/src/single-instance.ts）
+    # 按 userData 目录判定，而 Linux 上 userData = $XDG_CONFIG_HOME/<app.name>，所以这次活体运行
+    # 带一个隔离的 XDG_CONFIG_HOME 就能与用户正在用的那份并存，也顺手不会碰对方真实的 userData。
+    # 代价在托盘断言：宿主里可能同时挂着「别人那项」，只按产品名去认会认错人 —— 所以启动前先给
+    # 已注册的项拍个快照，下面只认本次新增的。
+    if pgrep -f '[d]eepseek-harness$' >/dev/null 2>&1; then
+      echo "  [注意] 已有桌面端在跑；本次活体运行使用隔离的 userData（$LIVE/config）"
+    fi
+    tray_items_before=""
+    if command -v dbus-send >/dev/null 2>&1; then
+      tray_items_before="$(tray_items)"
+    fi
     APP_PID=""
     cleanup() {
       [[ -n "$APP_PID" ]] && kill "$APP_PID" 2>/dev/null
@@ -279,17 +321,17 @@ if (( RUNTIME )); then
     echo "sentinel" >"$LIVE/profiles/web/SENTINEL"
     sentinel_before="$(sha256sum "$LIVE/profiles/web/SENTINEL" | cut -d' ' -f1)"
 
-    DSH_HOME="$LIVE" "$APP" --remote-debugging-port="$CDP_PORT" >"$LIVE/app.log" 2>&1 &
+    DSH_HOME="$LIVE" XDG_CONFIG_HOME="$LIVE/config" "$APP" --remote-debugging-port="$CDP_PORT" >"$LIVE/app.log" 2>&1 &
     APP_PID=$!
-    ready=0
+    app_port=""
     for _ in $(seq 1 60); do
-      ss -ltn 2>/dev/null | grep -q ':19387' && { ready=1; break; }
+      app_port="$(desktop_host_port)" && break
       kill -0 "$APP_PID" 2>/dev/null || break
       sleep 1
     done
 
-    if (( ready )); then
-      ok "应用起来了，19387 在监听"
+    if [[ -n "$app_port" ]]; then
+      ok "应用起来了，Web Host 在 127.0.0.1:$app_port 监听（--port 0，端口由系统分配）"
 
       # 用 DevTools 协议问渲染文档本身，而不是只看进程在不在。
       cat >"$LIVE/cdp.mjs" <<'CDP'
@@ -310,7 +352,7 @@ for (const t of list.filter(t => t.type === 'page')) {
   ws.close()
 }
 CDP
-      # 19387 一开始监听时 renderer 往往还在加载，所以要等到节点数连续两次一样（渲染稳定）为止。
+      # 端口一开始监听时 renderer 往往还在加载，所以要等到节点数连续两次一样（渲染稳定）为止。
       cdp_out=""; app_nodes=""; prev_nodes=""
       for _ in $(seq 1 60); do
         cdp_out="$(env -u NODE_OPTIONS -u NODE_USE_ENV_PROXY -u http_proxy -u https_proxy \
@@ -361,7 +403,8 @@ CDP
       # 我们的项，且该项的菜单里读得到带产品名的条目（打开 + 退出）。第二条才是关键：菜单要的
       # libdbusmenu-glib 是 dlopen 的，缺了它图标照样出现、菜单却是空的，等于没有退出入口，
       # 而 ldd 和 namcap 都看不见这件事。
-      # 产品名在两种界面语言里都是 "DeepSeek Harness"，所以断言与语言无关。
+      # 产品名在两种界面语言里都是 "DeepSeek Harness"，所以断言与语言无关；「必须是本次启动新增的
+      # 那一项」这条见启动前的快照。
       # 注册是异步的（实测要几秒，取决于面板何时来取），所以这里轮询而不是只看一眼。
       if command -v dbus-send >/dev/null 2>&1 \
         && dbus-send --session --print-reply --dest=org.kde.StatusNotifierWatcher /StatusNotifierWatcher \
@@ -370,6 +413,8 @@ CDP
         tray_item=""; tray_labels=0
         for _ in $(seq 1 30); do
           for item in $(tray_items); do
+            # 只认本次启动新增的项：已有桌面端在跑时，宿主里那份属于别人。
+            grep -qxF "$item" <<<"$tray_items_before" && continue
             bus="${item%%/*}"; item_path="/${item#*/}"
             dbus-send --session --print-reply --dest="$bus" "$item_path" \
               org.freedesktop.DBus.Properties.Get string:org.kde.StatusNotifierItem string:ToolTip 2>/dev/null \
@@ -391,22 +436,32 @@ CDP
         if [[ -n "$tray_item" ]]; then
           ok "托盘已注册（$tray_item），菜单里读到 $tray_labels 个带产品名的条目（打开 + 退出）"
         else
-          bad "没找到菜单可读的已注册托盘项——缺 libdbusmenu-glib 时就是这个症状"
+          bad "没找到本次启动新增的、菜单可读的托盘项——缺 libdbusmenu-glib 时就是这个症状"
         fi
       else
         skip "没有 StatusNotifierWatcher（非 KDE，或没有会话总线），跳过托盘检查"
       fi
 
-      # 共享根：会话与凭据落在根上，而不是某个 profile 里。会话由 Host 在启动后异步建立。
+      # 共享根：工作区存储与凭据落在根上，而不是某个 profile 里。
+      #
+      # 这里原本断言 sessions/ 里出现 session.v*.jsonl（会话由 Host 在启动后异步建立）。那条的
+      # 前提从上游 0.2.0 起就不成立了：全新根上的首启停在「Choose a workspace to start /
+      # No sessions yet」，应用不再自动建会话 —— 2026-10-04 对照实测，0.2.1-alpha.1 与已安装的
+      # 0.2.0rc2-1 在同一个隔离根上都不建，把用户真实 userData 拷进去也一样。改成断言应用确实把
+      # 工作区存储写进了共享根：这是首启状态下「共享根活得起来」能拿到的最直接证据。要验会话本身，
+      # 得先在 UI 里选一个工作区。
       [[ -d "$LIVE/profiles/desktop" ]] && ok 'profiles/desktop 已建立' || bad 'profiles/desktop 没有建立'
-      session_seen=0
+      workspace_store=0
       for _ in $(seq 1 30); do
-        if find "$LIVE/sessions" -name 'session.v*.jsonl*' -print -quit 2>/dev/null | grep -q .; then
-          session_seen=1; break
+        if [[ -s "$LIVE/storages/workspace.json" && -n "$NODE" ]] \
+          && "$NODE" -e 'const j = require(process.argv[1]); process.exit(j?.unit?.name === "workspace" && j?.global?.initialized === true ? 0 : 1)' \
+               "$LIVE/storages/workspace.json" 2>/dev/null; then
+          workspace_store=1; break
         fi
         sleep 1
       done
-      (( session_seen )) && ok '共享根里出现了会话记录' || bad '共享根里没有会话记录'
+      (( workspace_store )) && ok '共享根里出现了已初始化的工作区存储（storages/workspace.json）' \
+                            || bad '共享根里没有可用的工作区存储（storages/workspace.json）'
       [[ -f "$LIVE/.credentials.yaml" ]] && ok '共享根里出现了凭据文件' || bad '共享根里没有凭据文件'
       if [[ "$(sha256sum "$LIVE/profiles/web/SENTINEL" | cut -d' ' -f1)" == "$sentinel_before" ]]; then
         ok 'profiles/web 的哨兵未被触碰'
@@ -426,7 +481,7 @@ CDP
         fi
       fi
     else
-      bad "应用没能在 60 秒内监听 19387（日志见下）"
+      bad "应用没能在 60 秒内起来（Host 没有监听端口，日志见下）"
       sed 's/^/         /' "$LIVE/app.log" | tail -10
     fi
 
