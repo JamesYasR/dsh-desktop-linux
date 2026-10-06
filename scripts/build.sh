@@ -6,9 +6,12 @@
 #   ./scripts/build.sh --deb        # 只出 .deb
 #   ./scripts/build.sh --rpm        # 只出 .rpm（需要系统装 rpmbuild，Arch 上是 rpm-tools）
 #   ./scripts/build.sh --all        # AppImage + deb + rpm
+#   ./scripts/build.sh --formats=AppImage,deb   # 自选组合（必须一次跑完，见下）
 #
 # 每次只出被点名的格式：整条流水线（build:official / release:pack / prepare:*）才是耗时大头，
 # 多打一种格式只多一次 fpm/AppImage 打包，所以分开跑更快，也更容易定位失败。
+# 例外：更新元数据（*-linux.yml）由最后一次 electron-builder 调用生成，**分两次跑会互相覆盖**，
+# 想同时发布 AppImage 和 deb 就用 --formats=AppImage,deb 一次跑完。
 #
 # 环境变量：
 #   DSH_DESKTOP_LINUX_HOME  隔离的 dsh 数据目录，默认 /tmp/dsh-desktop-test
@@ -52,6 +55,9 @@ case "$MODE" in
   --deb)      SCRIPT="package:linux:x64";     FORMATS="deb" ;;
   --rpm)      SCRIPT="package:linux:x64";     FORMATS="rpm" ;;
   --all)      SCRIPT="package:linux:x64";     FORMATS="AppImage,deb,rpm" ;;
+  # 一次构建出多个格式：electron-builder 的更新元数据只认最后一次调用，分两次跑会互相覆盖，
+  # 所以「既要 AppImage 又要 deb」时必须一次跑完。
+  --formats=*) SCRIPT="package:linux:x64";    FORMATS="${MODE#--formats=}" ;;
   *) echo "未知参数：$MODE" >&2; exit 2 ;;
 esac
 

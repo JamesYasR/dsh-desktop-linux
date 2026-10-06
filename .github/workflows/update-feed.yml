@@ -114,7 +114,8 @@ jobs:
         run: echo "DSH_DESKTOP_LINUX_HOME=$RUNNER_TEMP/dsh-desktop-test" >> "$GITHUB_ENV"
 
       # 上游刻意忽略环境里的 DSH_DESKTOP_LINUX_*，发布设置只能来自 apps/desktop/.env.linux。
-      # feed 地址指向本仓库的滚动 release，产物因此自带这条更新通道。
+      # feed 地址指向本仓库的滚动 release，产物因此自带这条更新通道；maintainer/homepage 进 deb 的
+      # control 文件，模板里是上游移植者的名字，发布版必须写成本仓库。
       - name: 写入发布设置
         run: |
           env_file="upstream/apps/desktop/.env.linux"
@@ -122,11 +123,16 @@ jobs:
           {
             echo
             echo "DSH_DESKTOP_LINUX_UPDATE_ORIGIN=https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG"
+            echo "DSH_DESKTOP_LINUX_MAINTAINER=\"${GITHUB_REPOSITORY_OWNER} <${GITHUB_REPOSITORY_OWNER}@users.noreply.github.com>\""
+            echo "DSH_DESKTOP_LINUX_HOMEPAGE=https://github.com/$GITHUB_REPOSITORY"
           } >> "$env_file"
           grep -v '^#' "$env_file" | grep -v '^$'
 
-      - name: 构建 AppImage
-        run: ./scripts/build.sh --appimage
+      # AppImage 与 deb 必须**一次**构建：更新元数据只由最后一次 electron-builder 调用生成，
+      # 分两次跑后一次会覆盖前一次，AppImage 的更新通道就没了（AppImageUpdater 靠元数据里的
+      # files 列表按扩展名挑包，所以两个都在同一份元数据里反而正确）。
+      - name: 构建（AppImage + deb）
+        run: ./scripts/build.sh --formats=AppImage,deb
 
       # 通道名固定为 nightly（update-coordinator.ts），所以元数据是 nightly-linux.yml，
       # 不是 electron-builder 默认的 latest-linux.yml。名字不对应用就查不到更新。
@@ -136,17 +142,22 @@ jobs:
           dir="upstream/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts"
           metadata="$dir/nightly-linux.yml"
           appimage="$(find "$dir" -maxdepth 1 -name '*.AppImage' -print -quit)"
+          deb="$(find "$dir" -maxdepth 1 -name '*.deb' -print -quit)"
           [[ -f "$metadata" ]] || { echo "缺少 $metadata" >&2; ls -la "$dir" >&2; exit 1; }
           [[ -n "$appimage" ]] || { echo "缺少 .AppImage" >&2; exit 1; }
-          grep -q '^path:' "$metadata" || { echo "$metadata 里没有 path" >&2; exit 1; }
+          [[ -n "$deb" ]] || { echo "缺少 .deb" >&2; exit 1; }
           grep -q '^sha512:' "$metadata" || { echo "$metadata 里没有 sha512" >&2; exit 1; }
+          grep -q "$(basename "$appimage")" "$metadata" || { echo "$metadata 没有列出 AppImage" >&2; exit 1; }
+          grep -q "$(basename "$deb")" "$metadata" || { echo "$metadata 没有列出 deb" >&2; exit 1; }
           {
             echo "metadata=$metadata"
             echo "appimage=$appimage"
-            echo "appimage_name=$(basename "$appimage")"
+            echo "deb=$deb"
           } >> "$GITHUB_OUTPUT"
           echo "==> $metadata"
           cat "$metadata"
+          echo "==> deb control"
+          dpkg-deb -f "$deb" Package Version Maintainer Architecture
 
       - name: 发布到滚动 release
         env:
@@ -156,17 +167,18 @@ jobs:
           ref="${{ needs.prepare.outputs.ref }}"
           metadata="${{ steps.artifacts.outputs.metadata }}"
           appimage="${{ steps.artifacts.outputs.appimage }}"
+          deb="${{ steps.artifacts.outputs.deb }}"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
               --title "$ref" \
-              --notes "DeepSeek Harness desktop for Linux，从上游 $ref 构建（unsigned）。应用内更新读取本 release 的 nightly-linux.yml。"
+              --notes "DeepSeek Harness desktop for Linux，从上游 $ref 构建（unsigned）。AppImage 支持应用内自更新（读本 release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。"
           fi
           # 先上传新载荷并覆盖同名项，再清掉上一版遗留的资产，缩短 feed 不完整的窗口。
-          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$metadata" "$appimage"
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$metadata" "$appimage" "$deb"
           while read -r name; do
             case "$name" in
-              *.AppImage|*-linux.yml)
-                [[ "$name" == "$(basename "$metadata")" || "$name" == "$(basename "$appimage")" ]] && continue
+              *.AppImage|*.deb|*.rpm|*-linux.yml)
+                [[ "$name" == "$(basename "$metadata")" || "$name" == "$(basename "$appimage")" || "$name" == "$(basename "$deb")" ]] && continue
                 gh release delete-asset "$tag" "$name" --repo "$GITHUB_REPOSITORY" --yes
                 ;;
             esac

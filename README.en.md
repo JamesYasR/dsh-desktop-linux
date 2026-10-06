@@ -28,6 +28,10 @@ cd dsh-desktop-linux
 
 You can also take the AppImage straight from [Releases](../../releases) and run it after `chmod +x`.
 
+A `.deb` is published alongside it for Debian and Ubuntu (`sudo apt install ./deepseek-harness-*.deb`).
+A deb installation **cannot** self-update — in-application update replaces the running AppImage file —
+so reinstall from a newer release instead.
+
 ## Build from source
 
 Node 22.19+ or 24, and pnpm 11.

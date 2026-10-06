@@ -25,7 +25,10 @@ cd dsh-desktop-linux
 ./scripts/install-from-release.sh
 ```
 
-也可以直接从 [Releases](../../releases) 取 AppImage，`chmod +x` 后运行。
+也可以直接从 [Releases](../../releases) 取 AppImage，`chmod +x` 后运行；同一个 release 里还有 `.deb`
+（Debian / Ubuntu：`sudo apt install ./deepseek-harness-*.deb`）。
+
+deb 装出来的那份**不能应用内自更新**（自更新要替换正在运行的 AppImage 文件），升级请重新下载安装。
 
 ## 从源码构建
 

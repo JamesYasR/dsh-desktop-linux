@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # 把构建出来的 AppImage 装进当前用户目录，并建立桌面快捷方式与应用菜单入口。
 #
-#   ./scripts/install-user.sh                 # 装到 $HOME/.local（不需要 root）
+#   ./scripts/install-user.sh                 # 装到 ~/app（不需要 root）
+#   APPDIR=~/Applications ./scripts/install-user.sh
 #   TARGET_HOME=/home/someone ./scripts/install-user.sh
 #
-# 为什么装进 ~/.local 而不是 /opt：应用内更新要替换正在运行的那个 AppImage 文件本身，
+# 为什么装进用户目录而不是 /opt：应用内更新要替换正在运行的那个 AppImage 文件本身，
 # 装到 root 拥有的目录里更新会失败。这里保持文件属主是当前用户。
 #
 # 安装结果：
-#   ~/.local/opt/deepseek-harness/deepseek-harness.AppImage   应用本体
-#   ~/.local/share/icons/hicolor/scalable/apps/deepseek-harness.svg
+#   ~/app/deepseek-harness.AppImage                           应用本体
+#   ~/.local/share/icons/hicolor/{scalable,256x256,...}/apps/deepseek-harness.*
 #   ~/.local/share/applications/deepseek-harness.desktop      桌面快捷方式 / 应用菜单
 #
 # 桌面条目与图标都取自 AppImage 自带的那一份（electron-builder 生成的），所以与 deb/rpm
@@ -25,8 +26,8 @@ ART="${ARTIFACTS:-$ROOT/upstream/apps/desktop/.desktop-build/targets/linux-x64/u
 appimage="$(find "$ART" -maxdepth 1 -name '*.AppImage' -print -quit 2>/dev/null)"
 [[ -n "$appimage" ]] || { echo "找不到 AppImage（$ART）；先跑 scripts/build.sh --appimage" >&2; exit 1; }
 
-opt="$TARGET_HOME/.local/opt/deepseek-harness"
-bin="$opt/deepseek-harness.AppImage"
+appdir="${APPDIR:-$TARGET_HOME/app}"
+bin="$appdir/deepseek-harness.AppImage"
 icons="$TARGET_HOME/.local/share/icons/hicolor/scalable/apps"
 apps="$TARGET_HOME/.local/share/applications"
 
@@ -38,7 +39,7 @@ desktop_template="$(find "$extract/squashfs-root" -maxdepth 1 -name '*.desktop' 
 icon_template="$(find "$extract/squashfs-root/usr/share/icons" -type f -print -quit)"
 [[ -n "$desktop_template" && -n "$icon_template" ]] || { echo "AppImage 里没有 .desktop 或图标" >&2; exit 1; }
 
-install -d "$opt" "$icons" "$apps"
+install -d "$appdir" "$icons" "$apps"
 install -Dm755 "$appimage" "$bin"
 install -Dm644 "$icon_template" "$icons/deepseek-harness.svg"
 
