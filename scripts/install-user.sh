@@ -42,11 +42,23 @@ install -d "$opt" "$icons" "$apps"
 install -Dm755 "$appimage" "$bin"
 install -Dm644 "$icon_template" "$icons/deepseek-harness.svg"
 
+# 多尺寸 PNG：dock/任务栏按固定像素尺寸取图，只有可缩放 SVG 时个别实现会退回默认图标。
+if command -v convert >/dev/null; then
+  for size in 256 128 64 48; do
+    install -d "$TARGET_HOME/.local/share/icons/hicolor/${size}x${size}/apps"
+    convert -background none -density 384 "$icon_template" -resize "${size}x${size}" \
+      "$TARGET_HOME/.local/share/icons/hicolor/${size}x${size}/apps/deepseek-harness.png" 2>/dev/null || true
+  done
+fi
+
 # 保留模板里的 Name/Icon/StartupWMClass/MimeType/Categories，只把 Exec 换成装好的绝对路径。
-sed -e "s|^Exec=.*|Exec=\"$bin\" %U|" \
-    -e "s|^TryExec=.*|TryExec=\"$bin\"|" \
+# --class 强制窗口的 app_id / WM_CLASS：GNOME 就是拿它去找 <app_id>.desktop 并取图的。
+# TryExec 必须**不带引号**：GIO 会把带引号的值当成一个不存在的可执行文件，于是把整个条目丢掉，
+# 应用既不出现在应用列表里，运行中的窗口也匹配不到图标（只剩默认图标）。
+sed -e "s|^Exec=.*|Exec=\"$bin\" --class=deepseek-harness %U|" \
+    -e "s|^TryExec=.*|TryExec=$bin|" \
     "$desktop_template" > "$apps/deepseek-harness.desktop"
-grep -q '^TryExec=' "$apps/deepseek-harness.desktop" || printf 'TryExec="%s"\n' "$bin" >> "$apps/deepseek-harness.desktop"
+grep -q '^TryExec=' "$apps/deepseek-harness.desktop" || printf 'TryExec=%s\n' "$bin" >> "$apps/deepseek-harness.desktop"
 chmod 0644 "$apps/deepseek-harness.desktop"
 
 # 让桌面环境立刻看到新条目（缺工具时跳过，不是错误）。
@@ -55,6 +67,6 @@ command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t -f "$
 
 echo "==> 已安装：$bin"
 echo "==> 桌面快捷方式：$apps/deepseek-harness.desktop"
-echo "==> 图标：$icons/deepseek-harness.svg"
+echo "==> 图标：$icons/deepseek-harness.svg + hicolor/{48,64,128,256}/apps/deepseek-harness.png"
 echo
 sed 's/^/    /' "$apps/deepseek-harness.desktop"
