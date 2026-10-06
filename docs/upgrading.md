@@ -31,7 +31,7 @@ cd ~/dsh-workspace/杂活/dsh-desktop-linux
 前提是构建时 `apps/desktop/.env.linux` 里的地址指向你自己的源（workflow 会自动写）：
 
 ```dotenv
-DSH_DESKTOP_LINUX_UPDATE_ORIGIN=https://github.com/<owner>/<repo>/releases/download/linux-latest
+DSH_DESKTOP_LINUX_UPDATE_ORIGIN=https://github.com/JamesYasR/dsh-desktop-linux/releases/download/linux-latest
 ```
 
 ## 三、手动那条路（本机直接编）

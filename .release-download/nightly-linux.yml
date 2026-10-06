@@ -1,0 +1,9 @@
+version: 0.2.1-alpha.1
+files:
+  - url: deepseek-harness-0.2.1-alpha.1-linux-x86_64-unsigned.AppImage
+    sha512: ea6h9stu1ZSrze4deYfLRFNIHs8+ZO6kMp84tAntszYvcw3CzqIv4R2kOtIdBWxe+Rp+aAAXOcewIcHdzeSTSQ==
+    size: 362271658
+    blockMapSize: 377790
+path: deepseek-harness-0.2.1-alpha.1-linux-x86_64-unsigned.AppImage
+sha512: ea6h9stu1ZSrze4deYfLRFNIHs8+ZO6kMp84tAntszYvcw3CzqIv4R2kOtIdBWxe+Rp+aAAXOcewIcHdzeSTSQ==
+releaseDate: '2026-10-06T15:08:35.214Z'

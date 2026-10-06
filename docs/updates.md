@@ -35,7 +35,7 @@ AppImage 启动
 **同名环境变量会被上游整个滤掉**，只能写进这个文件：
 
 ```dotenv
-DSH_DESKTOP_LINUX_UPDATE_ORIGIN=https://github.com/<owner>/<repo>/releases/download/linux-latest
+DSH_DESKTOP_LINUX_UPDATE_ORIGIN=https://github.com/JamesYasR/dsh-desktop-linux/releases/download/linux-latest
 ```
 
 规则：

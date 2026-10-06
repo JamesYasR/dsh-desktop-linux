@@ -1,219 +1,66 @@
-# dsh-desktop-linux
+# DeepSeek Harness Desktop for Linux
 
-**中文** | [English](README.en.md)
+把官方桌面端（[`deepseek-ai/deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness) 的
+`apps/desktop`）搬到 Linux，并把它在 Linux 上缺的那几块补齐。跑的就是上游那份 Electron 应用，
+不是套壳浏览器。
 
-> 本项目为独立社区项目。**不是** DeepSeek 官方产品，与 DeepSeek 无隶属关系。
+![Ubuntu 26.04 / GNOME / Wayland 实拍](docs/screenshot.png)
 
-把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 官方桌面端
-（`apps/desktop` 的 Electron 应用）的**打包流水线**移植到 Linux，产出
-AppImage / deb / rpm / Arch 包。
+<sub>实拍：原生标题栏和菜单栏都没了，只剩 40px 标题条 + 系统风格窗口按钮，应用/编辑变成标题条上的弹出菜单。</sub>
 
-上游目前明确不支持 Linux（`apps/desktop/README.md`：*"Linux is not a supported Desktop
-release target."*）。本项目补的就是这一块：让官方打包流水线认得 `linux-x64` 并产出安装包。
-当前验证范围见[验证状态](#验证状态)。
+## 和“能跑起来”的区别
 
-![DeepSeek Harness 桌面端界面](docs/screenshot.png)
-
-## 项目产物
-
-本项目的产物是**官方 Electron 应用本身**：
-
-- 渲染走自己的 `dsh-app://` 协议，而不是去连一个本地 Web 服务；
-- 内置 Node / pnpm / Python 运行时，不依赖系统 Node；
-- 独占 `$DSH_HOME/profiles/desktop`，不占用 `web` profile。
-
-代价是构建重得多：要拉上游 monorepo、跑 pnpm workspace 构建、再用 electron-builder 打包。
+| | |
+|---|---|
+| **跨平台外观** | 上游只在 Windows 画自定义标题栏，Linux 会落回 GTK 标题栏**加**菜单栏（实测非客户区 110px）。这里让 Linux 走与 Windows 同一条路径：40px 标题条、Electron overlay 画的系统风格窗口按钮、原生菜单栏收进标题条 |
+| **应用内更新** | 上游更新通道只认 mac/win，而且 unsigned 构建直接跳过更新配置。这里接通了 AppImage 通道：`检查更新 → 下载 → 校验 sha512 → 替换自身 → 重启` |
+| **一条命令装好** | 下载最新发布 → 校验 sha512 → 装进 `~/.local` → 建桌面快捷方式。装在用户目录而不是 `/opt`，是为了让自更新能替换自身文件 |
+| **自动跟进上游** | CI 每天扫上游 tag，补丁能打上就自动构建发布；应用内更新读同一个 release。补丁冲突时流水线失败并发邮件，不会发出半成品 |
 
 ## 安装
 
-| 发行版 | 格式 | 安装方式 |
-|---|---|---|
-| 通用 | AppImage | 从 [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases) 下载，`chmod +x` 后直接运行 |
-| Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
-| Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
-| Arch Linux | PKGBUILD | 仓库自带，本地 `makepkg` 构建（未发布到 AUR），见 [Arch 包](#arch-包) |
+```bash
+git clone https://github.com/JamesYasR/dsh-desktop-linux
+cd dsh-desktop-linux
+./scripts/install-from-release.sh
+```
 
-产物是 **unsigned** 构建（文件名里带 `-unsigned`）。安装后 `dsh://` 链接会交给它处理。
+也可以直接从 [Releases](../../releases) 取 AppImage，`chmod +x` 后运行。
 
 ## 从源码构建
 
-依赖：Node 22.19+ 或 24+、**pnpm 11**、git。
-打 rpm 还需要系统有 `rpmbuild`。
+需要 Node 22.19+ 或 24、pnpm 11。
 
 ```bash
-git clone https://github.com/ffyfox/dsh-desktop-linux
-cd dsh-desktop-linux
-
-./scripts/fetch-upstream.sh      # 拉上游源码（默认用 PKGBUILD 里钉的 tag）
+./scripts/fetch-upstream.sh      # 拉上游源码到 ./upstream
 ./scripts/apply-patches.sh       # 打补丁
-./scripts/build.sh --all         # AppImage + deb + rpm
-./scripts/verify.sh --runtime    # 验证矩阵
+./scripts/build.sh --appimage    # 也支持 --deb / --rpm / --all
 ```
 
-`build.sh` 的参数：`--dir`（只出未打包目录，最快）、`--appimage`（默认）、`--deb`、`--rpm`、`--all`。
-整条流水线（`build:official` → `release:pack` → `prepare:*` → `package`）才是耗时大头，
-多打一种格式只多一次 fpm/AppImage 打包，所以分开跑更快，也更容易定位失败。
+## 上游发新版了
 
-产物落在 `upstream/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts/`。
-
-deb / rpm 的 `Maintainer:` / `Homepage:` 来自 `upstream/apps/desktop/.env.linux`。`build.sh`
-首次运行就从仓库里的 `.env.linux.example` 生成，值已经填好。要换成你自己的，改那个文件即可：
-**同名环境变量会被上游整个滤掉**，`DSH_DESKTOP_LINUX_MAINTAINER=… build.sh --deb` 静默无效。
-
-### 硬性前提
-
-**必须用 pnpm 11。** 上游仓库声明 `packageManager: pnpm@11.7.0`，pnpm 11 会自己切到该版本；
-pnpm 9 会在 `pnpm install` 报 `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`。
-
-### 跟进官方新版本
-
-补丁相对固定基线生成，所以上游发新版时先验证补丁还打不打得上，再构建：
+通常什么都不用做：CI 会跟进，应用里点「检查更新」即可。想在本机直接编：
 
 ```bash
-./scripts/upgrade.sh --check     # 切到最新 tag 并逐个试打（成功则树已就绪，失败则完整回滚并给出重做指引）
-./scripts/upgrade.sh             # 验证 + 构建 + 重装
+./scripts/upgrade.sh --check     # 先验证补丁还打不打得上；失败会完整回滚并指出该改哪个文件
+./scripts/upgrade.sh             # 验证通过后构建 + 重装
 ```
 
-全自动那条路（CI 构建并发布，应用内「检查更新」直接升级）与补丁冲突时的重做步骤，见
-[docs/upgrading.md](docs/upgrading.md)。
+细节见 [docs/upgrading.md](docs/upgrading.md) 与 [docs/updates.md](docs/updates.md)。
 
-## Arch 包
+## 补丁
 
-PKGBUILD 直接吃上游的 release 源码包，不依赖 `./upstream` 检出：
-
-```bash
-./scripts/pkgbuild-dir.sh     # 摊平成 ./pkgbuild
-cd pkgbuild && makepkg -si
-```
-
-本项目不发布到 AUR，PKGBUILD 只用于本地构建。
-
-Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/deepseek-harness` 是符号链接。
-
-## 它是怎么工作的
-
-```
-官方 Electron 壳（apps/desktop）
-├── 渲染进程 ──── dsh-app:// 协议 ──── 应用 UI
-└── Host 进程 ─── primary-runtime 自带的真 Node ─── 捆绑的 dsh 运行时
-                       └── $DSH_HOME/profiles/desktop
-```
-
-三个值得知道的设计点：
-
-- **Host 跑在真 Node 上，不是 Electron 的 node 模式。** Electron 的 node 模式下 `sharp` 解码会段错误，
-  所以 Linux 的 Host 改走 primary-runtime 自带的 Node。连带地，**Linux 产物的 dsh 目录树不放进 asar**
-  （真 Node 读不了归档），这是 `linux-unpacked` 体积偏大的原因。
-- **profile 是独占的。** 桌面端用 `$DSH_HOME/profiles/desktop`，CLI 连参数层面都拒绝这个 profile
-  （`error: profile "desktop" is managed exclusively by the Electron application`）。
-  会话、设置、凭据仍在 `$DSH_HOME` 根上，与 CLI 共享。
-- **沙箱。** 内核支持非特权 user namespace 时走 namespace 沙箱（渲染进程在独立 user namespace + seccomp）；
-  不支持才退回 setuid `chrome-sandbox`。AppImage 交给 AppRun 自己探测，deb / rpm / Arch 包在
-  postinst 里做同样的判断。
-
-### 关窗、托盘与退出
-
-**关窗不会完全退出程序——这是上游的设计。** 上游 `main.ts` 拦截主窗口的 `close`
-并改为**隐藏**：Host 继续跑、正在跑的任务不中断，会话写锁也不释放。
-
-上游没有给 Linux 准备**「回到隐藏窗口」**或**「完全退出程序」**的路径。
-参考上游在其他平台的实现，补丁 `0013` 把托盘补上：图标常驻，带托盘菜单。
-
-- 找回窗口：托盘菜单「打开」，或再启动一次（第二次启动只聚焦已有实例）。
-- 完全退出：托盘菜单「退出」、标题条上的 `Application` → `Quit`、或 `Ctrl+Q`。
-
-### 标题栏与窗口外观
-
-上游只给 Windows 画了自定义标题栏，Linux 落回 GTK 的原生标题栏**加**菜单栏——实测非客户区
-110px，看上去就是那条突兀的系统样式条。补丁 `0018` 让 Linux 走与 Windows 同一条路径：
-
-- **`caption`（默认）**：隐藏原生标题栏与菜单栏，改用 40px 标题条（Web 客户端按
-  `data-windows-titlebar` 布局），窗口按钮由 Electron 的 window-controls overlay 画成系统风格，
-  Application/Edit 变成标题条上的弹出菜单。窗口圆角交给 GNOME。
-- **`rounded`（可选，实验性）**：无边框透明窗口 + 页面自绘按钮 + 四角 12px 圆角。
-- **`native`（回退）**：上游原始行为。
-
-切换只需给启动命令加环境变量，不必重编：
-
-```bash
-DSH_DESKTOP_LINUX_WINDOW_CHROME=rounded /path/to/deepseek-harness-*.AppImage
-```
-
-为什么默认不是 `rounded`：`titleBarOverlay` 与 `transparent` 在当前 Electron 上互斥，而且透明
-在 X11 下实测没有生效（窗口是 32 位 ARGB，但圆角处像素仍不透明），所以系统风格按钮与四角圆角
-只能二选一。细节见 [patches/README.md](patches/README.md)。
-
-## 验证状态
-
-**当前实测环境较少，后续会尽可能拓展。** 下面两张表随反馈更新——欢迎在
-[Issues](https://github.com/ffyfox/dsh-desktop-linux/issues) 报告你的结果，能用和不能用
-都欢迎。
-
-### 环境
-
-| 环境 | 状态 |
-|---|---|
-| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **已实测**，正常 |
-| Ubuntu 26.04 LTS · GNOME 50 · Wayland · x86_64 | **已实测**，正常（托盘宿主 Ubuntu 自带） |
-| Debian 13 · GNOME 48 · Wayland · x86_64 | **已实测**，正常（托盘要装扩展，见[已知限制](#已知限制)） |
-| Fedora 44 Workstation · GNOME 50 · Wayland · x86_64 | **已实测**，正常（托盘要装扩展，见[已知限制](#已知限制)） |
-| 其他发行版（Linux Mint / CachyOS 等） | 未验证 |
-| 其他DE/WM（Xfce / Hyprland 等） | 未验证 |
-| X11 | 未验证 |
-| aarch64 | 未构建、未验证 |
-
-### 产物
-
-| 产物 | 状态 |
-|---|---|
-| AppImage | **已实测**：`chmod +x` → 启动 → 托盘、关窗 → 退出 |
-| deb | **已实测**：`apt install` → 启动 → 托盘、关窗 → 退出 |
-| rpm | **已实测**：`dnf install` → 启动 → 托盘、关窗 → 退出 |
-| Arch 包 | **已实测**：`makepkg` → `pacman -U` 安装 → 启动、沙箱、卸载 |
-| `linux-unpacked` | **已实测**：`verify.sh --runtime` 活体矩阵 |
+18 个。`0001–0015` 是社区移植基础（来自 [ffyfox/dsh-desktop-linux](https://github.com/ffyfox/dsh-desktop-linux)，
+本仓库保留了其提交历史）；`0016–0018` 是本项目加的：应用内更新通道、运行期换更新源、跨平台标题栏。
+逐个说明在 [patches/README.md](patches/README.md)。
 
 ## 已知限制
 
-- **GNOME 默认看不到托盘，要自己装扩展。** 托盘走 freedesktop 的 StatusNotifierItem，GNOME 本体
-  不提供宿主，装 `gnome-shell-extension-appindicator` 才有（Ubuntu 默认已装；Debian 要自己
-  `apt install`，Fedora 要 `dnf install`）。装完还有两个坑：扩展 UUID 是
-  `ubuntu-appindicators@ubuntu.com`（Debian 13 的 59-4 就是这个名字，旧文档里的
-  `appindicatorsupport@rgcjonas.gmail.com` 已废弃），而且**新装的
-  扩展不会热加载**，得注销重登才生效。没有托盘宿主时图标不会出现，关窗后就只能靠二次
-  启动把窗口找回。
-- **AppImage 要系统提供 FUSE 2（`libfuse.so.2`）。** 主流发行版现在默认只装 FUSE 3（Debian 13、
-  Ubuntu 26.04、Fedora 44 实测都只有 `libfuse3.so.3`），直接运行会报
-  `dlopen(): error loading libfuse.so.2`。装对应包即可：Fedora `sudo dnf install fuse-libs`、
-  Debian 13 与 Ubuntu 24.04+ `sudo apt install libfuse2t64`（Ubuntu 22.04 是 `libfuse2`）；
-  或 `APPIMAGE_EXTRACT_AND_RUN=1 ./deepseek-harness-*.AppImage` 绕过（解包到 /tmp，多占约 1.2 G）。
-  deb / rpm / Arch 包不受影响。
-- **Electron 版本比上游 lockfile 钉的高（44.4.5）。** 上游 `apps/desktop/package.json` 写的是
-  `^44.0.0`，caret 本来就允许；但它的 lockfile 把解析钉死在 44.0.0，而那个版本的**托盘项在 KDE 与
-  GNOME 下都注册不上**（上游回归 [electron#53213](https://github.com/electron/electron/issues/53213)，
-  修复 [electron#53214](https://github.com/electron/electron/pull/53214) 直到 2026-08-26 才合并，
-  而 44.0.0 发布于 08-25）。补丁 `0014` 把 lockfile 解到 44.4.5，代价是 Linux 产物自带的 Chromium
-  比上游发布的桌面端更新一点。
-- **应用内更新要自己接一条 feed，而且只对 AppImage 生效。** 上游没有 Linux 更新通道，本项目补了
-  一条（补丁 `0016` / `0017`）：在 `apps/desktop/.env.linux` 里设 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN`
-  就会产出带 `app-update.yml` 的产物，应用内的「检查更新」读这条 feed 并替换自身 AppImage；
-  不设则维持上游行为（产物不含更新器）。**只对 AppImage 生效**：安装时 electron-updater 要替换
-  正在运行的那个 AppImage 文件，从解包目录直接跑或 deb/rpm 安装的那份都不走这条路。
-  产物 unsigned，更新只校验 sha512、没有签名校验，所以 feed 必须是发布者自己控制的 HTTPS 源。
-  详见 [docs/updates.md](docs/updates.md)。
-- **没有「安装命令行工具」入口。** 官方桌面端在 macOS / Windows 上能从菜单把自带的 `dsh` CLI 装进
-  PATH（macOS 提权建 `/usr/local/bin/dsh` 符号链接，Windows 写用户 PATH）；上游只实现了这两条分支，
-  Linux 产物不提供。想在终端用 `dsh` 得自己装，或直接用应用自带的那份
-  （`resources/app/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js`，配 `resources/runtime/primary-runtime`
-  里的 node）。
-- **不签名。** 产物是 unsigned 构建。
-- **Platform 侧会把 Linux 客户端认成 macOS。** 上游的客户端身份映射是
-  `platform === 'win32' ? 'desktop-win' : 'desktop-mac'`，Linux 落到 `desktop-mac`。
-  这是上游类型联合 `'darwin' | 'win32' | null` 的结果，不是本项目引入的；
-  同一个请求里的 `device_model` 又是 `linux-x64`。
-- **`linux-unpacked` 约 1.1G。** asar 关闭后是小文件目录树，AppImage 压成 squashfs 后 339M，
-  但首次启动的文件读取比 asar 多。
-- **只做 x86_64。**
+- 托盘走 StatusNotifierItem，GNOME 需要 `gnome-shell-extension-appindicator`（Ubuntu 默认已装）。
+- 产物 unsigned，更新只校验 sha512、没有签名校验，所以 feed 必须是发布者自己控制的 HTTPS 源。
+- 只出 x86_64。
+- deb / rpm / Arch 包能构建，但应用内自更新只对 AppImage 生效（安装时替换的是正在运行的 AppImage 文件本身）。
 
 ## 许可
 
-MIT
+MIT。社区项目，与 DeepSeek 官方无隶属关系；DeepSeek Harness 及其依赖仍受各自上游许可与商标政策约束。

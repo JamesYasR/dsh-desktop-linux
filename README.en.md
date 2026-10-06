@@ -1,254 +1,72 @@
-# dsh-desktop-linux
+# DeepSeek Harness Desktop for Linux
 
-[中文](README.md) | **English**
+Brings the official desktop application ([`deepseek-ai/deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness),
+`apps/desktop`) to Linux and fills in what it is missing there. This runs upstream's own Electron
+application — it is not a browser wrapper.
 
-> An independent community project. **Not** an official DeepSeek product, and not
-> affiliated with DeepSeek.
+![Captured on Ubuntu 26.04 / GNOME / Wayland](docs/screenshot.png)
 
-Ports the **packaging pipeline** of the official
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) desktop app
-(the Electron application in `apps/desktop`) to Linux, producing
-AppImage / deb / rpm / Arch packages.
+<sub>Captured live: the native titlebar and menu bar are gone, leaving a 40px caption with
+system-style window buttons and Application/Edit as popup menus on the caption.</sub>
 
-Upstream explicitly does not support Linux today (`apps/desktop/README.md`:
-*"Linux is not a supported Desktop release target."*). This project fills exactly
-that gap: it teaches the official packaging pipeline about `linux-x64` and emits
-installable artifacts. See [Validation status](#validation-status) for what has
-actually been tested.
+## What this adds beyond "it launches"
 
-![The DeepSeek Harness desktop application](docs/screenshot.png)
-
-## What this project produces
-
-What this project ships is **the official Electron application itself**:
-
-- the renderer loads over its own `dsh-app://` protocol rather than connecting to a local web server;
-- it carries its own Node / pnpm / Python runtime and does not use the system Node;
-- it owns `$DSH_HOME/profiles/desktop` exclusively and does not touch the `web` profile.
-
-The cost is a much heavier build: clone the upstream monorepo, run the pnpm
-workspace build, then package with electron-builder.
+| | |
+|---|---|
+| **Cross-platform appearance** | Upstream draws a custom titlebar on Windows only; on Linux it falls back to the GTK titlebar **plus** menu bar (110px of non-client area, measured). Linux now takes the same path: a 40px caption, window buttons drawn by Electron's overlay in the system style, and the native menu bar folded into the caption |
+| **In-application updates** | Upstream's update channel only knows mac/win, and unsigned builds skip update configuration entirely. The AppImage channel is wired here: check → download → verify sha512 → replace itself → restart |
+| **One-command install** | Download the latest release → verify sha512 → install into `~/.local` → create a desktop entry. It installs per user rather than into `/opt` so self-update can replace its own file |
+| **Automatic upstream tracking** | CI scans upstream tags daily and publishes a build when the patches still apply; the in-application updater reads that same release. A conflicting patch fails the run and emails the owner instead of shipping something half-built |
 
 ## Install
 
-| Distribution | Format | How |
-|---|---|---|
-| Any | AppImage | Download from [Releases](https://github.com/ffyfox/dsh-desktop-linux/releases), `chmod +x`, run it |
-| Debian / Ubuntu | deb | `sudo apt install ./deepseek-harness-*.deb` |
-| Fedora / RHEL | rpm | `sudo dnf install ./deepseek-harness-*.rpm` |
-| Arch Linux | PKGBUILD | Shipped in the repo, built locally with `makepkg` (not published to the AUR) — see [Arch package](#arch-package) |
-
-Artifacts are **unsigned** builds (the file name carries `-unsigned`). Once
-installed, `dsh://` links are handed to it.
-
-## Building from source
-
-Requirements: Node 22.19+ or 24+, **pnpm 11**, and git.
-Building the rpm additionally needs `rpmbuild` on the system.
-
 ```bash
-git clone https://github.com/ffyfox/dsh-desktop-linux
+git clone https://github.com/JamesYasR/dsh-desktop-linux
 cd dsh-desktop-linux
+./scripts/install-from-release.sh
+```
 
-./scripts/fetch-upstream.sh      # fetch upstream sources (defaults to the tag pinned in PKGBUILD)
+You can also take the AppImage straight from [Releases](../../releases) and run it after `chmod +x`.
+
+## Build from source
+
+Node 22.19+ or 24, and pnpm 11.
+
+```bash
+./scripts/fetch-upstream.sh      # clone upstream into ./upstream
 ./scripts/apply-patches.sh       # apply the patch series
-./scripts/build.sh --all         # AppImage + deb + rpm
-./scripts/verify.sh --runtime    # verification matrix
+./scripts/build.sh --appimage    # --deb / --rpm / --all also work
 ```
 
-`build.sh` flags: `--dir` (unpacked directory only, fastest), `--appimage`
-(default), `--deb`, `--rpm`, `--all`. The long pole is the pipeline itself
-(`build:official` → `release:pack` → `prepare:*` → `package`); each extra format
-only adds one fpm/AppImage packaging pass, so building formats separately is both
-faster and easier to debug.
+## When upstream releases
 
-Artifacts land in
-`upstream/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts/`.
-
-The deb / rpm `Maintainer:` / `Homepage:` come from `upstream/apps/desktop/.env.linux`.
-`build.sh` creates it on first run from the repo's `.env.linux.example`, values already filled in.
-To change them, edit that file: **the same-named environment variables are filtered out by
-upstream**, so `DSH_DESKTOP_LINUX_MAINTAINER=… build.sh --deb` is silently ignored.
-
-### Hard requirement
-
-**pnpm 11 is required.** The upstream repository declares
-`packageManager: pnpm@11.7.0`, and pnpm 11 switches to that version by itself.
-pnpm 9 fails `pnpm install` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
-
-### Following upstream releases
-
-The patch series is generated against a fixed baseline, so verify that the patches still apply before
-building anything:
+Usually nothing: CI tracks it and the application's Check for Updates does the rest. To build locally:
 
 ```bash
-./scripts/upgrade.sh --check     # move to the newest tag and apply each patch; the tree stays ready on success, rolls back fully on failure
-./scripts/upgrade.sh             # verify, then build and reinstall
+./scripts/upgrade.sh --check     # verify the patches still apply; a failure rolls back fully and names the file to fix
+./scripts/upgrade.sh             # build and reinstall once that passes
 ```
 
-The fully automatic path (CI builds and publishes, the in-application Check for Updates installs it)
-and the rework steps for a conflicting patch are in [docs/upgrading.md](docs/upgrading.md).
+See [docs/upgrading.md](docs/upgrading.md) and [docs/updates.md](docs/updates.md).
 
-## Arch package
+## Patches
 
-The PKGBUILD consumes upstream's release tarball and does not depend on the
-`./upstream` checkout:
-
-```bash
-./scripts/pkgbuild-dir.sh     # flatten into ./pkgbuild
-cd pkgbuild && makepkg -si
-```
-
-This project is not published to the AUR; the PKGBUILD is for local builds only.
-
-The Arch package installs the unpacked tree into `/opt/deepseek-harness-desktop`
-and symlinks `/usr/bin/deepseek-harness`.
-
-## How it works
-
-```
-Official Electron shell (apps/desktop)
-├── renderer ──── dsh-app:// protocol ──── application UI
-└── Host process ─── real Node from primary-runtime ─── bundled dsh runtime
-                          └── $DSH_HOME/profiles/desktop
-```
-
-Three design points worth knowing:
-
-- **The Host runs on a real Node, not Electron's node mode.** Under Electron's
-  node mode `sharp` segfaults while decoding, so on Linux the Host uses the Node
-  bundled in primary-runtime. Consequently **Linux artifacts do not put the dsh
-  tree into an asar** (a real Node cannot read inside an archive), which is why
-  `linux-unpacked` is large.
-- **The profile is exclusive.** The desktop uses `$DSH_HOME/profiles/desktop`, and
-  the CLI rejects that profile at the argument layer
-  (`error: profile "desktop" is managed exclusively by the Electron application`).
-  Sessions, settings, and credentials still live at the root of `$DSH_HOME`,
-  shared with the CLI.
-- **Sandboxing.** Where the kernel supports unprivileged user namespaces, the
-  renderer runs in a namespace sandbox (separate user namespace + seccomp); only
-  where it does not does it fall back to a setuid `chrome-sandbox`. The AppImage
-  leaves this to AppRun's own probe, and the deb / rpm / Arch packages make the
-  same decision in their postinst.
-
-### Closing, the tray, and quitting
-
-**Closing the window does not fully quit the application — that is upstream's design.** Upstream
-`main.ts` intercepts the main window's `close` and **hides** it instead: the Host keeps running,
-tasks in progress are not interrupted, and session write locks are not released.
-
-Upstream provides no Linux path to **"get back to the hidden window"** or to
-**"fully quit the application"**. Following upstream's implementation on the other platforms,
-patch `0013` adds the tray: the icon stays for the whole run and carries a tray menu.
-
-- To get the window back: the tray menu's "Open", or launch the application again (a second launch
-  only focuses the instance that is already running).
-- To really quit: the tray menu's "Quit", `Application` → `Quit` on the caption, or `Ctrl+Q`.
-
-### Titlebar and window appearance
-
-Upstream draws a custom titlebar on Windows only; Linux falls back to GTK's native titlebar **plus**
-the application menu bar — measured at 110px of non-client area, which reads as that out-of-place
-system-style strip. Patch `0018` puts Linux on the same path as Windows:
-
-- **`caption` (default)**: hides the native titlebar and menu bar and uses a 40px caption instead
-  (the Web client lays it out from `data-windows-titlebar`); the window buttons come from Electron's
-  window-controls overlay in the system style, and Application/Edit become popup menus on the caption.
-  Window corners stay as GNOME rounds them.
-- **`rounded` (optional, experimental)**: frameless transparent window, page-drawn buttons, and a
-  12px radius on all four corners.
-- **`native` (fallback)**: upstream's original behaviour.
-
-Switching needs no rebuild — add the environment variable to the launch command:
-
-```bash
-DSH_DESKTOP_LINUX_WINDOW_CHROME=rounded /path/to/deepseek-harness-*.AppImage
-```
-
-Why `rounded` is not the default: `titleBarOverlay` and `transparent` are mutually exclusive in the
-current Electron, and transparency did not take effect under X11 in testing (the window does use a
-32-bit ARGB visual, but the corner pixels stayed opaque), so system-style buttons and four rounded
-corners are currently an either/or. Details in [patches/README.md](patches/README.md).
-
-## Validation status
-
-**Only a few environments have been tested so far, and we intend to widen that coverage.**
-Both tables below are kept up to date as reports come in — please tell us how it goes in
-[Issues](https://github.com/ffyfox/dsh-desktop-linux/issues), whether it works or not.
-
-### Environment
-
-| Environment | Status |
-|---|---|
-| Arch Linux · KDE Plasma 6 · Wayland · x86_64 | **Tested**, works |
-| Ubuntu 26.04 LTS · GNOME 50 · Wayland · x86_64 | **Tested**, works (Ubuntu ships the tray host) |
-| Debian 13 · GNOME 48 · Wayland · x86_64 | **Tested**, works (the tray needs an extra extension, see [Known limitations](#known-limitations)) |
-| Fedora 44 Workstation · GNOME 50 · Wayland · x86_64 | **Tested**, works (the tray needs an extra extension, see [Known limitations](#known-limitations)) |
-| Other distributions (Linux Mint / CachyOS, …) | Not tested |
-| Other desktops / WMs (Xfce / Hyprland, …) | Not tested |
-| X11 | Not tested |
-| aarch64 | Not built, not tested |
-
-### Artifacts
-
-| Artifact | Status |
-|---|---|
-| AppImage | **Tested**: `chmod +x` → launch → tray, window close → quit |
-| deb | **Tested**: `apt install` → launch → tray, window close → quit |
-| rpm | **Tested**: `dnf install` → launch → tray, window close → quit |
-| Arch package | **Tested**: `makepkg` → `pacman -U` → launch, sandbox, uninstall |
-| `linux-unpacked` | **Tested**: `verify.sh --runtime` live matrix |
+18 of them. `0001–0015` are the community porting base (from
+[ffyfox/dsh-desktop-linux](https://github.com/ffyfox/dsh-desktop-linux); this repository keeps its
+commit history). `0016–0018` are ours: the in-application update channel, the runtime feed override,
+and the cross-platform caption. Each patch is documented in [patches/README.md](patches/README.md).
 
 ## Known limitations
 
-- **GNOME shows no tray by default — install the extension yourself.** The tray uses freedesktop
-  StatusNotifierItem, and GNOME ships no host for it, so you need `gnome-shell-extension-appindicator`
-  (Ubuntu installs it by default; Debian needs its own `apt install` and Fedora its `dnf install`).
-  Two traps after installing: the extension's UUID is `ubuntu-appindicators@ubuntu.com` (that is the
-  name in Debian 13's 59-4 —
-  the `appindicatorsupport@rgcjonas.gmail.com` of older docs is obsolete), and **newly installed
-  extensions are not hot-loaded**, so you must log out and back in. Without a tray host the icon never
-  appears, and a hidden window can then only be recovered by launching the application again.
-- **The AppImage needs FUSE 2 (`libfuse.so.2`) on the system.** Mainstream distributions now install
-  only FUSE 3 (Debian 13, Ubuntu 26.04 and Fedora 44 all ship just `libfuse3.so.3`), so running it
-  stops at `dlopen(): error loading libfuse.so.2`. Install the matching package — Fedora
-  `sudo dnf install fuse-libs`, Debian 13 and Ubuntu 24.04+ `sudo apt install libfuse2t64`
-  (`libfuse2` on Ubuntu 22.04) — or bypass the mount with
-  `APPIMAGE_EXTRACT_AND_RUN=1 ./deepseek-harness-*.AppImage` (extracts to /tmp, about 1.2G extra).
-  The deb, rpm and Arch packages are unaffected.
-- **Electron is newer than the version upstream's lockfile pins (44.4.5).** Upstream's
-  `apps/desktop/package.json` says `^44.0.0`, which the caret already allows, but its lockfile pins
-  the resolution to 44.0.0 — and that version's **tray item registers on neither KDE nor GNOME**
-  (upstream regression [electron#53213](https://github.com/electron/electron/issues/53213), fixed by
-  [electron#53214](https://github.com/electron/electron/pull/53214) only on 2026-08-26, while 44.0.0
-  was released on 08-25). Patch `0014` resolves the lockfile to 44.4.5; the cost is that Linux
-  artifacts carry a slightly newer Chromium than upstream's desktop releases.
-- **In-application updates need a feed you host, and work for the AppImage only.** Upstream has no
-  Linux update channel; this project adds one (patches `0016` / `0017`). Setting
-  `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` in `apps/desktop/.env.linux` produces artifacts carrying
-  `app-update.yml`, and the built-in **Check for Updates** reads that feed and replaces the running
-  AppImage. Leaving it unset keeps upstream behaviour and ships no updater. It applies to the AppImage
-  only: installing means electron-updater replaces the AppImage file that is currently running, so a
-  launch from the unpacked directory, or a deb/rpm installation, does not take this path. Artifacts are
-  unsigned and updates are verified by sha512 alone, with no signature check, so the feed must be an
-  HTTPS origin you control. See [docs/updates.md](docs/updates.md).
-- **No "install the command line tool" entry.** The official desktop offers one on macOS and Windows:
-  it puts the bundled `dsh` CLI on your PATH (a privileged symlink at `/usr/local/bin/dsh` on macOS, a
-  user PATH edit on Windows), and upstream implements only those two branches, so the Linux artifacts
-  have none. To use `dsh` in a terminal, install it yourself, or run the copy the application ships
-  (`resources/app/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js`, with the node under
-  `resources/runtime/primary-runtime`).
-- **Unsigned.** Artifacts are unsigned builds.
-- **Platform sees a Linux client as macOS.** Upstream maps client identity with
-  `platform === 'win32' ? 'desktop-win' : 'desktop-mac'`, so Linux lands on
-  `desktop-mac`. That follows from upstream's `'darwin' | 'win32' | null` union
-  and is not introduced here; the same request reports `device_model` as
-  `linux-x64`.
-- **`linux-unpacked` is about 1.1G.** With asar disabled it is a tree of small
-  files; the AppImage compresses it to 339M, but first launch reads more files
-  than an asar build would.
-- **x86_64 only.**
+- The tray uses StatusNotifierItem, which needs `gnome-shell-extension-appindicator` on GNOME
+  (preinstalled on Ubuntu).
+- Artifacts are unsigned and updates are verified by sha512 alone, with no signature check, so the
+  feed must be an HTTPS origin its publisher controls.
+- x86_64 only.
+- deb / rpm / Arch packages build, but self-update applies to the AppImage only: installation
+  replaces the AppImage file that is currently running.
 
 ## License
 
-MIT
+MIT. A community project with no affiliation to DeepSeek; DeepSeek Harness and its dependencies
+remain under their own upstream licenses and trademark policy.
