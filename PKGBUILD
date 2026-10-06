@@ -68,6 +68,11 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         '0013-desktop-linux-tray.patch'
         '0014-electron-version-tray-fix.patch'
         '0015-desktop-linux-hidden-overlay-reveal.patch'
+        # 0016–0018 是叠加在 0001–0015 之上的（要改的文件已被前面的补丁动过），
+        # 所以必须在它们之后应用。见 patches/README.md。
+        '0016-desktop-linux-appimage-update-feed.patch'
+        '0017-desktop-linux-runtime-update-feed-override.patch'
+        '0018-desktop-linux-window-caption.patch'
         # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
         # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
         'tray-linux.png')
@@ -87,6 +92,9 @@ sha256sums=('b307d140074f0aab57d053a2a459efe40e1796e07a2ae3ba71dd178e39b2afa1'
             '042117088d416a602985e595e768b2d921e98b64477eaa6a04383a958ae79ba3'
             '702830e40816183cfaf2bc800957dbc93e90e0324eb93454f3ac01d3ce6cd1d9'
             '9496d3d4c4c9741a396c940bd0babd97e1d58111da31ba746cf0a6061825adba'
+            '22e663f486c4dadccb07d173168d500c82ec70c03b6fe53a0609dd1f51ef722f'
+            '6567d07a59ba7c40a8a650112e1d3cffd655bae320ba1682cce74cdc43d813a2'
+            'cb813b65e76920141c7cc3bd17a27612621e81ef4012c74f9b60ce5616d52c88'
             'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 
 prepare() {
@@ -99,7 +107,8 @@ prepare() {
   bsdtar -xf "$srcdir/$pkgname-$pkgver.tar.gz" -C "$srcdir"
   cd "$_srcdirname"
 
-  # 全部补丁都相对同一个基线（$_tag）生成，互相独立，按文件名顺序应用即可。
+  # 0001–0015 相对同一个基线（$_tag）生成、互相独立；0016/0017 叠加在其上，所以按文件名
+  # 顺序应用即可（顺序在这里是有意义的，不能重排）。
   local patchfile
   for patchfile in "${source[@]}"; do
     [[ "$patchfile" == *.patch ]] || continue

@@ -1,5 +1,5 @@
 # 上游检出（由 scripts/fetch-upstream.sh 生成，不入库）
-/upstream/
+/upstream
 
 # 构建产物
 dist/
@@ -30,3 +30,7 @@ node_modules/
 # 本机专用的指令 overlay（AGENTS.md 的本地补充）
 AGENTS.local.md
 CLAUDE.local.md
+
+# 更新验证与本机安装的临时目录
+/.verify/
+/.verify-install-*/

@@ -1,0 +1,416 @@
+diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
+index fc19021..9fa1fc7 100644
+--- a/apps/desktop/src/ipc.ts
++++ b/apps/desktop/src/ipc.ts
+@@ -29,6 +29,8 @@ export const DESKTOP_IPC = {
+   updatesPresentation: 'dsh-desktop:updates-presentation',
+   nativeThemeSet: 'dsh-desktop:native-theme-set',
+   windowFullscreen: 'dsh-desktop:window-fullscreen',
++  windowControl: 'dsh-desktop:window-control',
++  windowMaximized: 'dsh-desktop:window-maximized',
+   windowsAppearance: 'dsh-desktop:windows-appearance',
+   windowsMenu: 'dsh-desktop:windows-menu',
+ } as const
+diff --git a/apps/desktop/src/linux-caption.ts b/apps/desktop/src/linux-caption.ts
+new file mode 100644
+index 0000000..af12953
+--- /dev/null
++++ b/apps/desktop/src/linux-caption.ts
+@@ -0,0 +1,90 @@
++/** Window controls and corner geometry for the Linux caption, which the platform overlay cannot draw. */
++
++import { ipcRenderer } from 'electron'
++import { DESKTOP_IPC } from './ipc.ts'
++import { linuxWindowChromeArgument } from './linux-window.ts'
++import { resolveDesktopLocale } from './locale.ts'
++import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
++
++// The frameless window paints no background of its own, so the radius clips the page and lets the
++// desktop show through the corners, which is how the platform rounds the macOS and Windows windows.
++const WINDOW_RADIUS = 12
++
++const GLYPH = {
++  minimize: '<svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" stroke-width="1.2"/></svg>',
++  maximize: '<svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.2" y="1.2" width="7.6" height="7.6" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
++  restore: '<svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.2" y="2.8" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M3.4 2.8V1.9a.7.7 0 0 1 .7-.7h4.2a.7.7 0 0 1 .7.7v4.2a.7.7 0 0 1-.7.7h-.9" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
++  close: '<svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1.2"/></svg>',
++} as const
++
++/**
++ * Install the application-drawn window controls, and round the window for the frameless chrome.
++ *
++ * The caption chrome and the native chrome need neither: the overlay draws its own buttons, and the
++ * window manager draws both the titlebar and its controls.
++ * @returns Disposes every injected node.
++ */
++export function installLinuxCaption(): () => void {
++  if (process.platform !== 'linux') return () => {}
++  if (linuxWindowChromeArgument(process.argv) !== 'rounded') return () => {}
++
++  const style = document.createElement('style')
++  style.textContent = `
++    html, body { border-radius: ${WINDOW_RADIUS}px !important; }
++    html { background: transparent !important; }
++    body { overflow: hidden !important; }
++  `
++  document.head.append(style)
++
++  const host = document.createElement('div')
++  host.dataset.dshWindowControls = ''
++  const shadow = host.attachShadow({ mode: 'open' })
++  const controls = document.createElement('style')
++  controls.textContent = `
++    :host { position: fixed; top: 0; right: 0; z-index: 1200;
++      height: var(--dsh-windows-titlebar-height, ${WINDOWS_TITLEBAR_HEIGHT}px);
++      display: flex; align-items: center; gap: 2px; padding-right: 8px;
++      font-family: var(--dsw-font-family); -webkit-app-region: no-drag; }
++    button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0;
++      border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary);
++      cursor: default; -webkit-app-region: no-drag; }
++    button:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
++    button[data-close]:hover { background: #e5484d; color: #ffffff; }
++    button:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: -1px; }
++    svg { pointer-events: none; }
++  `
++  const { messages } = resolveDesktopLocale(document.documentElement.lang)
++  const bar = document.createElement('div')
++  const entries = [
++    { action: 'minimize', glyph: GLYPH.minimize, label: messages.windowMinimize },
++    { action: 'toggle-maximize', glyph: GLYPH.maximize, label: messages.windowMaximize },
++    { action: 'close', glyph: GLYPH.close, label: messages.windowClose },
++  ] as const
++  const nodes = entries.map(entry => {
++    const button = document.createElement('button')
++    button.type = 'button'
++    if (entry.action === 'close') button.dataset.close = ''
++    button.setAttribute('aria-label', entry.label)
++    button.innerHTML = entry.glyph
++    button.addEventListener('click', () => { ipcRenderer.send(DESKTOP_IPC.windowControl, entry.action) })
++    bar.append(button)
++    return { action: entry.action, button }
++  })
++  shadow.append(controls, bar)
++  document.body.append(host)
++
++  const maximum = nodes.find(node => node.action === 'toggle-maximize')
++  const onMaximized = (_event: Electron.IpcRendererEvent, maximized: boolean): void => {
++    if (maximum === undefined) return
++    maximum.button.innerHTML = maximized ? GLYPH.restore : GLYPH.maximize
++    maximum.button.setAttribute('aria-label', maximized ? messages.windowRestore : messages.windowMaximize)
++  }
++  ipcRenderer.on(DESKTOP_IPC.windowMaximized, onMaximized)
++  ipcRenderer.send(DESKTOP_IPC.windowControl, 'state')
++
++  return () => {
++    ipcRenderer.off(DESKTOP_IPC.windowMaximized, onMaximized)
++    host.remove()
++    style.remove()
++  }
++}
+diff --git a/apps/desktop/src/linux-window.ts b/apps/desktop/src/linux-window.ts
+new file mode 100644
+index 0000000..4a0a71c
+--- /dev/null
++++ b/apps/desktop/src/linux-window.ts
+@@ -0,0 +1,46 @@
++/** Linux window chrome shared by the main process and the application preload. */
++
++/** Environment variable that selects the Linux window chrome. */
++export const LINUX_WINDOW_CHROME_ENV = 'DSH_DESKTOP_LINUX_WINDOW_CHROME'
++
++/** Preload argument carrying the selected chrome into the application document. */
++export const LINUX_CHROME_ARGUMENT = '--dsh-linux-chrome='
++
++/**
++ * Linux window chrome.
++ * - `native` keeps the window manager's titlebar and the native menu bar.
++ * - `caption` hides the titlebar and lets the window-controls overlay draw the buttons, so the page
++ *   owns a caption strip identical to the Windows shell's.
++ * - `rounded` removes the frame entirely: the page draws its own controls and owns the window corners.
++ */
++export type LinuxWindowChrome = 'native' | 'caption' | 'rounded'
++
++/**
++ * Resolve the Linux window chrome this process uses.
++ * @param platform - Process platform; every other platform keeps its own chrome.
++ * @param environment - Environment carrying the opt-in selection.
++ * @returns Selected chrome, defaulting to the application caption.
++ */
++export function resolveLinuxWindowChrome(
++  platform = process.platform,
++  environment: NodeJS.ProcessEnv = process.env,
++): LinuxWindowChrome {
++  if (platform !== 'linux') return 'native'
++  const value = environment[LINUX_WINDOW_CHROME_ENV]?.trim()
++  if (value === undefined || value === '') return 'caption'
++  if (value === 'native' || value === 'caption' || value === 'rounded') return value
++  throw new Error(`desktop window: ${LINUX_WINDOW_CHROME_ENV} must be native, caption, or rounded`)
++}
++
++/**
++ * Read the chrome one application document was started with.
++ * @param argv - Renderer arguments, which carry the main process's selection.
++ * @returns Selected chrome, or undefined when the argument is absent or unrecognised.
++ */
++export function linuxWindowChromeArgument(argv: readonly string[]): LinuxWindowChrome | undefined {
++  const prefix = LINUX_CHROME_ARGUMENT
++  const argument = argv.find(value => value.startsWith(prefix))
++  if (argument === undefined) return undefined
++  const value = argument.slice(prefix.length)
++  return value === 'native' || value === 'caption' || value === 'rounded' ? value : undefined
++}
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index 5d9d460..de4b9c3 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -1,6 +1,10 @@
+ /** Typed English and Chinese copy owned by the Electron shell. */
+ 
+ export const en = {
++  windowMinimize: 'Minimize',
++  windowMaximize: 'Maximize',
++  windowRestore: 'Restore',
++  windowClose: 'Close',
+   cliCommandMenu: 'Manage dsh Command…',
+   cliCommandTitle: 'Manage dsh Command',
+   cliCommandLocation: 'Desktop command: {path}',
+@@ -172,6 +176,10 @@ export const en = {
+ export type DesktopMessages = { readonly [Key in keyof typeof en]: string }
+ 
+ export const zh = {
++  windowMinimize: '最小化',
++  windowMaximize: '最大化',
++  windowRestore: '还原',
++  windowClose: '关闭',
+   cliCommandMenu: '管理 dsh 命令…',
+   cliCommandTitle: '管理 dsh 命令',
+   cliCommandLocation: 'Desktop 命令：{path}',
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 2dfea39..f5ef7f3 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -1,5 +1,6 @@
+ import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
+ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
++import { LINUX_CHROME_ARGUMENT, resolveLinuxWindowChrome } from './linux-window.ts'
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+ 
+ import { readFile, writeFile } from 'node:fs/promises'
+@@ -191,6 +192,16 @@ function chromeFallbackFill(): string {
+   return nativeTheme.shouldUseDarkColors ? '#1b1b1c' : '#f9fafb'
+ }
+ 
++// Resolved before any window exists, so an unrecognised selection fails at startup instead of
++// leaving a window with no titlebar and no controls.
++const linuxChrome = resolveLinuxWindowChrome()
++
++/** Primary windows that draw their caption in the page instead of the window manager's titlebar. */
++const captionChrome = process.platform === 'win32' || (process.platform === 'linux' && linuxChrome !== 'native')
++
++/** Captions whose buttons come from Electron's window-controls overlay rather than from the page. */
++const overlayControls = process.platform === 'win32' || (process.platform === 'linux' && linuxChrome === 'caption')
++
+ /**
+  * Add the effective Desktop palette to a Platform authorization URL so the
+  * login page opens in the application's theme. `system` resolves through
+@@ -212,11 +223,17 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+     minWidth: 520,
+     minHeight: 600,
+     show,
+-    ...(process.platform === 'win32' && primary ? {
++    // The caption chrome drops the window manager's titlebar: Windows and Linux's caption mode let
++    // Electron's overlay draw the buttons, and Linux's rounded mode draws them in the page instead.
++    ...(captionChrome && primary ? (linuxChrome === 'rounded' ? {
++      frame: false,
++      transparent: true,
++      backgroundColor: '#00000000',
++    } : {
+       titleBarStyle: 'hidden' as const,
+       titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT, color: chromeFallbackFill(),
+         symbolColor: nativeTheme.shouldUseDarkColors ? '#f9fafb' : '#0f1115' },
+-    } : {}),
++    }) : {}),
+     // hiddenInset places traffic lights inside the sidebar; sidebar vibrancy
+     // needs a transparent window background to show through the page.
+     ...(process.platform === 'darwin' ? {
+@@ -236,13 +253,17 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+       webSecurity: true,
+       webviewTag: primary,
+       devTools: true,
++      // The page needs the selected chrome before its first paint; sandboxed preloads read argv.
++      ...(process.platform === 'linux' && primary
++        ? { additionalArguments: [`${LINUX_CHROME_ARGUMENT}${linuxChrome}`] }
++        : {}),
+     },
+   })
+   window.webContents.setWindowOpenHandler(({ url }) => {
+     if (['http:', 'https:'].includes(new URL(url).protocol)) void shell.openExternal(url)
+     return { action: 'deny' }
+   })
+-  if (process.platform === 'darwin' || process.platform === 'win32') {
++  if (captionChrome) {
+     // Fullscreen hides native window controls; overlays drop their caption clearance.
+     const sendFullscreen = (): void => {
+       if (!window.isDestroyed()) window.webContents.send(DESKTOP_IPC.windowFullscreen, window.isFullScreen())
+@@ -977,7 +998,8 @@ async function main(): Promise<void> {
+     { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
+   ]
+   const refreshApplicationMenu = (): void => {
+-    Menu.setApplicationMenu(Menu.buildFromTemplate(process.platform === 'win32' ? devToolsItems : [{
++    // Caption platforms show Application and Edit in the page's caption, so the native menu bar goes away.
++    Menu.setApplicationMenu(Menu.buildFromTemplate(captionChrome ? devToolsItems : [{
+       label: darwin ? app.name : currentDesktopLocale().messages.application,
+       submenu: [...applicationItems(), ...devToolsItems],
+     }, ...platformMenus()]))
+@@ -1016,7 +1038,7 @@ async function main(): Promise<void> {
+     ...(process.platform === 'win32' ? { icon: nativeImage.createFromPath(trayIconPath) } : {}),
+   })
+ 
+-  if (process.platform === 'win32') {
++  if (captionChrome) {
+     ipcMain.handle(DESKTOP_IPC.windowsMenu, (event, name: unknown, x: unknown, y: unknown) => {
+       assertDesktopSender(event, ['app'])
+       if (mainWindow === undefined || event.sender !== mainWindow.webContents
+@@ -1059,8 +1081,26 @@ async function main(): Promise<void> {
+       // Empty colors precede client stylesheet installation; only CSS color values cross IPC.
+       const validColor = (value: unknown): value is string => typeof value === 'string'
+         && /^(?:#[\da-f]{3,8}|rgba?\([\d.,%\s]+\))$/iu.test(value)
+-      if (validColor(color) && validColor(symbolColor)) mainWindow.setTitleBarOverlay({ color, symbolColor })
++      if (overlayControls && validColor(color) && validColor(symbolColor)) mainWindow.setTitleBarOverlay({ color, symbolColor })
+     })
++    // The frameless chrome draws its own buttons, so the page owns minimize, maximize, and close.
++    if (linuxChrome === 'rounded') {
++      ipcMain.on(DESKTOP_IPC.windowControl, (event, action: unknown) => {
++        const window = mainWindow
++        if (window === undefined || window.isDestroyed()
++          || event.sender !== window.webContents
++          || event.senderFrame !== window.webContents.mainFrame) return
++        if (!event.senderFrame.url.startsWith(`${SCHEME}://app/`)) return
++        if (action === 'minimize') window.minimize()
++        else if (action === 'toggle-maximize') {
++          if (window.isMaximized()) window.unmaximize()
++          else window.maximize()
++        }
++        else if (action === 'close') window.close()
++        // The preload asks for the current state on install; later changes arrive as window events.
++        else if (action === 'state') window.webContents.send(DESKTOP_IPC.windowMaximized, window.isMaximized())
++      })
++    }
+   }
+ 
+   const hideMainWindow = (window: BrowserWindow): void => {
+@@ -1075,6 +1115,15 @@ async function main(): Promise<void> {
+   const createMainWindow = (): BrowserWindow => {
+     const window = createWindow(appPreload, false, true)
+     mainWindow = window
++    if (linuxChrome === 'rounded') {
++      // The page's maximize glyph follows the window, including changes the page never requested.
++      const sendMaximized = (): void => {
++        if (!window.isDestroyed()) window.webContents.send(DESKTOP_IPC.windowMaximized, window.isMaximized())
++      }
++      window.on('maximize', sendMaximized)
++      window.on('unmaximize', sendMaximized)
++      window.webContents.on('did-finish-load', sendMaximized)
++    }
+     browserGuests.bind(window, (guest, name) => shortcuts.attachGuest(window, guest, name))
+     shortcuts.attach(window)
+     window.on('focus', automaticCheck)
+diff --git a/apps/desktop/src/preload-app.ts b/apps/desktop/src/preload-app.ts
+index f590b8b..b1614f8 100644
+--- a/apps/desktop/src/preload-app.ts
++++ b/apps/desktop/src/preload-app.ts
+@@ -7,6 +7,7 @@ import { PLATFORM_IPC } from './platform-ipc.ts'
+ import { markDocumentPlatform, syncWindowFullscreen } from './preload-platform.ts'
+ import { syncNativeTheme } from './preload-theme.ts'
+ import { syncWindowsAppearance } from './preload-windows.ts'
++import { installLinuxCaption } from './linux-caption.ts'
+ import { installMandatoryUpdateOverlay } from './preload-mandatory-overlay.ts'
+ import { createDesktopBrowserBridge } from './preload-browser.ts'
+ 
+@@ -72,6 +73,7 @@ if (location.protocol === `${SCHEME}:` && location.hostname === 'app') {
+     else body.setAttribute('tabindex', previous)
+   })
+   syncWindowsAppearance()
++  installLinuxCaption()
+   if (process.platform === 'win32') installMandatoryUpdateOverlay()
+   contextBridge.exposeInMainWorld('__DSH_DIRECTORY_PICKER__', {
+     pick: () => ipcRenderer.invoke(DESKTOP_IPC.directoryPick) as Promise<string | null>,
+diff --git a/apps/desktop/src/preload-windows.ts b/apps/desktop/src/preload-windows.ts
+index 5b9ed75..646a645 100644
+--- a/apps/desktop/src/preload-windows.ts
++++ b/apps/desktop/src/preload-windows.ts
+@@ -1,12 +1,24 @@
+ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
+-/** Synchronizes Windows context menus and caption colors with the application document. */
++/** Synchronizes the application caption's menus and overlay colors with the application document. */
+ import { ipcRenderer } from 'electron'
+ import { DESKTOP_IPC } from './ipc.ts'
+ import { installWindowsMenu } from './preload-menu.ts'
++import { linuxWindowChromeArgument } from './linux-window.ts'
+ 
+-/** Install the Windows-only titlebar marker and observe application language and palette changes. */
++/**
++ * Whether this document draws the caption instead of the window manager's titlebar.
++ * @returns True for the Windows shell and for the Linux chrome that hides the native titlebar.
++ */
++function usesCaptionChrome(): boolean {
++  if (process.platform === 'win32') return true
++  if (process.platform !== 'linux') return false
++  const chrome = linuxWindowChromeArgument(process.argv)
++  return chrome !== undefined && chrome !== 'native'
++}
++
++/** Install the caption titlebar marker and observe application language and palette changes. */
+ export function syncWindowsAppearance(): void {
+-  if (process.platform !== 'win32') return
++  if (!usesCaptionChrome()) return
+   const mark = (): void => {
+     const root = document.documentElement
+     root.dataset.windowsTitlebar = ''
+diff --git a/apps/desktop/tests/linux-window.spec.ts b/apps/desktop/tests/linux-window.spec.ts
+new file mode 100644
+index 0000000..8a7466c
+--- /dev/null
++++ b/apps/desktop/tests/linux-window.spec.ts
+@@ -0,0 +1,41 @@
++import { describe, expect, it } from 'vitest'
++import {
++  LINUX_CHROME_ARGUMENT,
++  LINUX_WINDOW_CHROME_ENV,
++  linuxWindowChromeArgument,
++  resolveLinuxWindowChrome,
++} from '../src/linux-window.ts'
++
++describe('Desktop Linux window chrome', () => {
++  it('keeps every other platform on its own chrome', () => {
++    expect(resolveLinuxWindowChrome('darwin', {})).toBe('native')
++    expect(resolveLinuxWindowChrome('win32', { [LINUX_WINDOW_CHROME_ENV]: 'rounded' })).toBe('native')
++  })
++
++  // 默认值决定产物开箱长什么样：上游的 GTK 标题栏与菜单栏对跨平台界面来说是多余的。
++  it('defaults to the application caption', () => {
++    expect(resolveLinuxWindowChrome('linux', {})).toBe('caption')
++    expect(resolveLinuxWindowChrome('linux', { [LINUX_WINDOW_CHROME_ENV]: '   ' })).toBe('caption')
++  })
++
++  it.each(['native', 'caption', 'rounded'] as const)('accepts %s', (chrome) => {
++    expect(resolveLinuxWindowChrome('linux', { [LINUX_WINDOW_CHROME_ENV]: ` ${chrome} ` })).toBe(chrome)
++  })
++
++  it('rejects an unrecognised selection instead of guessing', () => {
++    expect(() => resolveLinuxWindowChrome('linux', { [LINUX_WINDOW_CHROME_ENV]: 'frameless' }))
++      .toThrow(/must be native, caption, or rounded/u)
++  })
++})
++
++describe('Desktop Linux chrome argument', () => {
++  it('reads the selection the main process passed to the document', () => {
++    expect(linuxWindowChromeArgument([`${LINUX_CHROME_ARGUMENT}rounded`, '--other'])).toBe('rounded')
++    expect(linuxWindowChromeArgument([`${LINUX_CHROME_ARGUMENT}caption`])).toBe('caption')
++  })
++
++  it('ignores a missing or unrecognised argument', () => {
++    expect(linuxWindowChromeArgument(['--other'])).toBeUndefined()
++    expect(linuxWindowChromeArgument([`${LINUX_CHROME_ARGUMENT}unknown`])).toBeUndefined()
++  })
++})

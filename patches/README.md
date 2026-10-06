@@ -70,6 +70,79 @@ rc.2 → 0.2.1-alpha.1 只有 3 个文件变过（`pnpm-lock.yaml`、`apps/deskt
 
 `0015` 是 `0013` 的下游：Linux 的首次关窗提示是 `0013` 打开的，而它用的正是这个浮层。
 
+## 让 Linux 也有应用内更新（0016–0017）
+
+上游桌面端的内建更新走 `electron-updater` + generic provider，而 `UPDATE_TARGETS` 只认
+mac/win，Linux 没有通道。更关键的是：**unsigned 构建直接跳过更新配置**（`publish` 为 null），
+所以 Linux 产物连 `app-update.yml` 都不存在，更新器默认是关的。这两个补丁把 Linux 的
+AppImage 更新通道接通，细节见 [docs/updates.md](../docs/updates.md)。
+
+| 补丁 | 覆盖文件 | 内容 |
+|---|---|---|
+| `0016-desktop-linux-appimage-update-feed.patch` | `scripts/desktop-linux-update.{mjs,d.mts}`（新增）、`scripts/desktop-package-environment.mjs`、`scripts/electron-builder-config.mjs`、`.env.linux.example` | 新增 `resolveDesktopLinuxUpdateConfig()`：读 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN`，校验后交给 electron-builder 的 `publish`。**只在 unsigned 的 Linux 构建上生效**，让产物产出 `app-update.yml` 与 `nightly-linux.yml`；不设则维持上游行为（`publish: null`，无更新器）。地址必须是绝对 URL、HTTPS（或回环上的 HTTP），不带凭据/query/fragment；`.env.linux` 白名单加上这个键，打包前先校验，坏地址在准备阶段就报错而不是打包末段 |
+| `0017-desktop-linux-runtime-update-feed-override.patch` | `src/update-coordinator.ts` | 同一个环境变量在**启动时**覆盖 embed 的 feed（`updater.setFeedURL(...)`），并让 `enabled()` 在 override 存在时也成立。效果：一个 AppImage 可以指向任意 feed —— 本地验证不必为换地址重编，运维换托管也不必重发产物。变量只在这一处读取，未设时行为与上游一致 |
+
+### 与 0001–0015 不同的地方
+
+**`0016` / `0017` 的基线是「已应用 0001–0015 的树」，不是上游 `5badb15`。** 前 15 个补丁相对
+同一个干净基线、彼此不重叠；这两个是叠加在其上的，因为 `0016` 要改的
+`desktop-package-environment.mjs`、`electron-builder-config.mjs`、`.env.linux.example` 正是
+`0003` / `0005` 已经改过的文件。按文件名顺序应用（`apply-patches.sh` 与 PKGBUILD 都是这个顺序），
+`0016` / `0017` 会最后落上去；`--revert` 逆序撤销也成立。
+
+重做上游基线时：先重生成 0001–0015（ffyfox 的流程），再在这棵树上重新生成这两个。
+
+### 注意
+
+- **通道名是 `nightly`，不是 `latest`。** `src/update-coordinator.ts` 里写死
+  `updater.channel = 'nightly'`，所以 electron-builder 产出的元数据文件叫
+  `nightly-linux.yml`，而**不是**它默认的 `latest-linux.yml`。发布时必须按这个名字提供。
+- **`0016` 只管构建期，`0017` 只管运行期。** 前者决定产物里嵌不嵌 feed、嵌什么地址；
+  后者决定启动时要不要换成别的地址。不设变量时两者都不改变上游行为。
+- **AppImage 才装得上更新。** electron-updater 在 Linux 选 `AppImageUpdater`，安装时要用
+  `$APPIMAGE` 定位并替换正在运行的那个文件；从 `linux-unpacked` 目录直接跑没有这个变量，
+  检查可以走通但安装会以 `ERR_UPDATER_OLD_FILE_NOT_FOUND` 失败。deb / rpm 装出来的那份不走这条路。
+- **产物是 unsigned 的，更新只校验 sha512，没有签名校验。** feed 的信任边界就是「谁能写它」，
+  所以公网 feed 必须由发布者自己控制的 HTTPS 源。
+
+## 让 Linux 用上跨平台标题栏（0018）
+
+上游只给 Windows 的主窗口设了 `titleBarStyle: 'hidden'` + `titleBarOverlay`，Linux 落回 GTK 的
+原生标题栏**加**应用菜单栏。实测（Electron 44.4.5，Ubuntu 26.04 / GNOME 50 / Wayland）：
+默认窗口的非客户区是 **110px**，`titleBarStyle: 'hidden'` 之后只剩 **42px**（Wayland 的阴影外扩），
+说明那一条正是 GTK 画出来的。
+
+| 补丁 | 覆盖文件 | 内容 |
+|---|---|---|
+| `0018-desktop-linux-window-caption.patch` | `src/linux-window.ts`（新增）、`src/linux-caption.ts`（新增）、`tests/linux-window.spec.ts`（新增）、`src/main.ts`、`src/ipc.ts`、`src/preload-app.ts`、`src/preload-windows.ts`、`src/locale.ts` | 新增 `DSH_DESKTOP_LINUX_WINDOW_CHROME`，取值 `caption`（默认）/ `native` / `rounded`。`caption` 让 Linux 主窗口走与 Windows 同一条自定义标题栏路径：Web 客户端按 `data-windows-titlebar` 预留 40px 标题条，Application/Edit 走原生弹出菜单，窗口按钮由 Electron 的 window-controls overlay 画；`native` 保留上游行为；`rounded` 走无边框透明窗口、自绘按钮与 12px 圆角 |
+
+### 三种模式
+
+| 模式 | 窗口 | 按钮 | 圆角 | 说明 |
+|---|---|---|---|---|
+| `caption`（默认） | `titleBarStyle: 'hidden'` + `titleBarOverlay` | Electron overlay 绘制的系统风格按钮 | 由 GNOME 决定（上圆下直） | 与 Windows 版一致的跨平台标题条 |
+| `rounded` | `frame: false` + `transparent: true` | 页面自绘（含本地化 aria-label） | 四角 12px | 实验性，见下 |
+| `native` | GTK 原生标题栏 + 菜单栏 | 系统 | 系统 | 上游原始行为，回退用 |
+
+### 注意
+
+- **overlay 只在非透明窗口上可用（实测）。** `titleBarOverlay` 与 `transparent: true` 互斥：
+  `hidden` + overlay 时 `navigator.windowControlsOverlay.visible === true`（rect 高 40px）；
+  一旦加 `transparent`，`visible` 变 `false`、非客户区归零。所以「系统风格按钮」与「四角圆角」
+  在当前 Electron 上只能二选一，默认选了前者。
+- **`rounded` 的透明有实测疑点，所以不是默认值。** X11 下窗口确实是 32 位 ARGB 视觉
+  （`Depth: 32`），CSS 的 `border-radius` 也确认生效（`getComputedStyle` 读到 60px），
+  但抓到的窗口像素在圆角处 alpha 仍是 1；补上 `enable-transparent-visuals` 也一样。
+  Wayland 下未验证。想要四角圆角的话先手工试：
+  `DSH_DESKTOP_LINUX_WINDOW_CHROME=rounded ./deepseek-harness-*.AppImage`。
+- **只剩 40px 就意味着原生菜单栏没了。** 上游 Linux 的应用菜单（Application/Edit）来自
+  `Menu.setApplicationMenu`，它以窗口内菜单栏的形式占高度。`caption` / `rounded` 下这条菜单
+  改为页面内的弹出菜单（`installWindowsMenu`，与 Windows 同源），所以 `refreshApplicationMenu`
+  与 `windowsMenu` IPC 的门禁从「仅 win32」放宽到「所有标题栏平台」。
+- **`data-windows-titlebar` 这个属性名没改。** 它由 Web 客户端的 `ui-layout` 消费
+  （`AppFrame.module.css`），Linux 复用同一套布局。改名要动客户端包，收益只是好看，
+  所以这里沿用原名并在 `preload-windows.ts` 里注明它现在的含义是「标题栏平台」。
+
 ## 注意
 
 - **dev 模式也需要 `0001`**——`dev.ts` 虽然不走 `package-target.ts`，

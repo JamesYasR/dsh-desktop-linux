@@ -76,6 +76,19 @@ upstream**, so `DSH_DESKTOP_LINUX_MAINTAINER=… build.sh --deb` is silently ign
 `packageManager: pnpm@11.7.0`, and pnpm 11 switches to that version by itself.
 pnpm 9 fails `pnpm install` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
 
+### Following upstream releases
+
+The patch series is generated against a fixed baseline, so verify that the patches still apply before
+building anything:
+
+```bash
+./scripts/upgrade.sh --check     # move to the newest tag and apply each patch; the tree stays ready on success, rolls back fully on failure
+./scripts/upgrade.sh             # verify, then build and reinstall
+```
+
+The fully automatic path (CI builds and publishes, the in-application Check for Updates installs it)
+and the rework steps for a conflicting patch are in [docs/upgrading.md](docs/upgrading.md).
+
 ## Arch package
 
 The PKGBUILD consumes upstream's release tarball and does not depend on the
@@ -130,7 +143,32 @@ patch `0013` adds the tray: the icon stays for the whole run and carries a tray 
 
 - To get the window back: the tray menu's "Open", or launch the application again (a second launch
   only focuses the instance that is already running).
-- To really quit: the tray menu's "Quit", the `Application` → `Quit` menu item, or `Ctrl+Q`.
+- To really quit: the tray menu's "Quit", `Application` → `Quit` on the caption, or `Ctrl+Q`.
+
+### Titlebar and window appearance
+
+Upstream draws a custom titlebar on Windows only; Linux falls back to GTK's native titlebar **plus**
+the application menu bar — measured at 110px of non-client area, which reads as that out-of-place
+system-style strip. Patch `0018` puts Linux on the same path as Windows:
+
+- **`caption` (default)**: hides the native titlebar and menu bar and uses a 40px caption instead
+  (the Web client lays it out from `data-windows-titlebar`); the window buttons come from Electron's
+  window-controls overlay in the system style, and Application/Edit become popup menus on the caption.
+  Window corners stay as GNOME rounds them.
+- **`rounded` (optional, experimental)**: frameless transparent window, page-drawn buttons, and a
+  12px radius on all four corners.
+- **`native` (fallback)**: upstream's original behaviour.
+
+Switching needs no rebuild — add the environment variable to the launch command:
+
+```bash
+DSH_DESKTOP_LINUX_WINDOW_CHROME=rounded /path/to/deepseek-harness-*.AppImage
+```
+
+Why `rounded` is not the default: `titleBarOverlay` and `transparent` are mutually exclusive in the
+current Electron, and transparency did not take effect under X11 in testing (the window does use a
+32-bit ARGB visual, but the corner pixels stayed opaque), so system-style buttons and four rounded
+corners are currently an either/or. Details in [patches/README.md](patches/README.md).
 
 ## Validation status
 
@@ -185,10 +223,15 @@ Both tables below are kept up to date as reports come in — please tell us how 
   [electron#53214](https://github.com/electron/electron/pull/53214) only on 2026-08-26, while 44.0.0
   was released on 08-25). Patch `0014` resolves the lockfile to 44.4.5; the cost is that Linux
   artifacts carry a slightly newer Chromium than upstream's desktop releases.
-- **No auto-update.** Upstream's mandatory-update policy channel only recognises
-  `desktop-win` / `desktop-mac` client identities, and Linux artifacts carry no
-  update channel, so the Linux build embeds no policy, never polls, and never
-  updates itself.
+- **In-application updates need a feed you host, and work for the AppImage only.** Upstream has no
+  Linux update channel; this project adds one (patches `0016` / `0017`). Setting
+  `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` in `apps/desktop/.env.linux` produces artifacts carrying
+  `app-update.yml`, and the built-in **Check for Updates** reads that feed and replaces the running
+  AppImage. Leaving it unset keeps upstream behaviour and ships no updater. It applies to the AppImage
+  only: installing means electron-updater replaces the AppImage file that is currently running, so a
+  launch from the unpacked directory, or a deb/rpm installation, does not take this path. Artifacts are
+  unsigned and updates are verified by sha512 alone, with no signature check, so the feed must be an
+  HTTPS origin you control. See [docs/updates.md](docs/updates.md).
 - **No "install the command line tool" entry.** The official desktop offers one on macOS and Windows:
   it puts the bundled `dsh` CLI on your PATH (a privileged symlink at `/usr/local/bin/dsh` on macOS, a
   user PATH edit on Windows), and upstream implements only those two branches, so the Linux artifacts

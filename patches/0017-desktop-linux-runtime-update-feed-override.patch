@@ -1,0 +1,44 @@
+diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
+index 8d6eb80..585d01e 100644
+--- a/apps/desktop/src/update-coordinator.ts
++++ b/apps/desktop/src/update-coordinator.ts
+@@ -11,6 +11,22 @@ import { DesktopUpdatePreparationError } from './update-error.ts'
+ 
+ const { autoUpdater } = electronUpdater
+ 
++/**
++ * Environment variable that points a packaged Linux application at another AppImage update feed.
++ *
++ * A packaged build embeds its feed URL in `app-update.yml`. Setting this variable at launch replaces
++ * that feed for this process, so one AppImage can serve a qualification feed and an operator can move
++ * the feed without rebuilding. Whoever starts the process therefore chooses which feed it trusts.
++ */
++const LINUX_UPDATE_FEED_ENV = 'DSH_DESKTOP_LINUX_UPDATE_ORIGIN'
++
++/** @returns The Linux feed override for this process, or undefined when the packaged feed applies. */
++function linuxUpdateFeedOverride(): string | undefined {
++  if (process.platform !== 'linux') return undefined
++  const value = process.env[LINUX_UPDATE_FEED_ENV]?.trim()
++  return value === undefined || value === '' ? undefined : value
++}
++
+ /** Owns one updater target until its download and installation settle. */
+ export class DesktopUpdateCoordinator {
+   private current: DesktopUpdateState = { phase: 'idle' }
+@@ -51,11 +67,15 @@ export class DesktopUpdateCoordinator {
+     private readonly publish: (state: DesktopUpdateState) => DesktopUpdateState,
+     private readonly beforeRestart: () => Promise<boolean>,
+     private readonly updater: AppUpdater = autoUpdater,
+-    private readonly enabled: () => boolean = () => app.isPackaged && existsSync(join(process.resourcesPath, 'app-update.yml')),
++    private readonly enabled: () => boolean = () => app.isPackaged
++      && (existsSync(join(process.resourcesPath, 'app-update.yml')) || linuxUpdateFeedOverride() !== undefined),
+     private readonly currentVersion: () => string = () => app.getVersion(),
+     private readonly downloadResult?: (success: boolean, reason?: string) => void,
+   ) {
+     if (updater === autoUpdater) {
++      // The packaged feed comes from app-update.yml; an override replaces it for this process only.
++      const feedOverride = linuxUpdateFeedOverride()
++      if (feedOverride !== undefined) updater.setFeedURL({ provider: 'generic', url: feedOverride, channel: 'nightly' })
+       // electron-updater omits this internal transport property from its public declarations.
+       // Real-Electron qualification exercises the pinned dependency integration.
+       const transportOwner = updater as AppUpdater & { httpExecutor: DesktopUpdateHttpExecutor }

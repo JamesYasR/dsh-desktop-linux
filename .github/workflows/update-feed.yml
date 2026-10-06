@@ -1,0 +1,169 @@
+name: linux-update-feed
+
+# 定时扫上游最新 tag，把 Linux AppImage 构建出来并发到一个滚动的 linux-latest release。
+# 应用内「检查更新」读的就是这个 release 里的 nightly-linux.yml，所以这条流水线跑通一次，
+# 之后上游发新版就会自动出现在用户的更新入口里。
+#
+# 手动触发可指定 ref（默认取上游最新的 dsh-v* tag）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '上游 ref（tag 或分支）；留空则取最新的 dsh-v* tag'
+        required: false
+        default: ''
+      force:
+        description: '即使该版本已发布，也重新构建'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: '24'
+  # 上游 CI 设这个，避免构建期跑到的 dsh 运行时往生产遥测端点上报。
+  DSH_TELEMETRY_DISABLED: '1'
+  # 滚动 tag：feed 地址必须是固定的，而上游版本号带 -rc/-alpha，走 releases/latest 会 404。
+  RELEASE_TAG: linux-latest
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.upstream.outputs.ref }}
+      skip: ${{ steps.guard.outputs.skip }}
+    steps:
+      - name: 解析上游 ref
+        id: upstream
+        env:
+          INPUT_REF: ${{ github.event.inputs.ref }}
+        run: |
+          ref="$INPUT_REF"
+          if [[ -z "$ref" ]]; then
+            ref="$(git ls-remote --tags --refs https://github.com/deepseek-ai/deepseek-harness.git 'dsh-v*' \
+              | awk -F/ '{print $NF}' | sort -V | tail -1)"
+          fi
+          [[ -n "$ref" ]] || { echo "无法确定上游 ref" >&2; exit 1; }
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "==> 上游 ref：$ref"
+
+      # release 标题记着这份产物是从哪个 ref 构建的，用它跳过重复构建。
+      - name: 判断是否已有该版本
+        id: guard
+        if: ${{ github.event.inputs.force != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          current="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name -q .name 2>/dev/null || true)"
+          if [[ "$current" == "${{ steps.upstream.outputs.ref }}" ]]; then
+            echo "==> $RELEASE_TAG 已经是 $current，跳过（要重跑请勾选 force）"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.skip != '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: 拉上游并打补丁
+        run: |
+          ./scripts/fetch-upstream.sh "${{ needs.prepare.outputs.ref }}"
+          ./scripts/apply-patches.sh
+
+      # 必须从上游检出里读 packageManager：本仓库根目录没有 package.json，
+      # 而写死 pnpm 9 会在 pnpm install --frozen-lockfile 撞 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
+      - name: 解析 pnpm 版本
+        id: pnpm
+        run: |
+          declared="$(node -p 'require("./upstream/package.json").packageManager ?? ""')"
+          version="${declared#pnpm@}"
+          [[ -n "$version" && "$declared" != "$version" ]] || { echo "packageManager 不是 pnpm@…：'$declared'" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ steps.pnpm.outputs.version }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+        working-directory: upstream
+
+      - name: 隔离 dsh 数据目录
+        run: echo "DSH_DESKTOP_LINUX_HOME=$RUNNER_TEMP/dsh-desktop-test" >> "$GITHUB_ENV"
+
+      # 上游刻意忽略环境里的 DSH_DESKTOP_LINUX_*，发布设置只能来自 apps/desktop/.env.linux。
+      # feed 地址指向本仓库的滚动 release，产物因此自带这条更新通道。
+      - name: 写入发布设置
+        run: |
+          env_file="upstream/apps/desktop/.env.linux"
+          cp upstream/apps/desktop/.env.linux.example "$env_file"
+          {
+            echo
+            echo "DSH_DESKTOP_LINUX_UPDATE_ORIGIN=https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG"
+          } >> "$env_file"
+          grep -v '^#' "$env_file" | grep -v '^$'
+
+      - name: 构建 AppImage
+        run: ./scripts/build.sh --appimage
+
+      # 通道名固定为 nightly（update-coordinator.ts），所以元数据是 nightly-linux.yml，
+      # 不是 electron-builder 默认的 latest-linux.yml。名字不对应用就查不到更新。
+      - name: 校验产物
+        id: artifacts
+        run: |
+          dir="upstream/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts"
+          metadata="$dir/nightly-linux.yml"
+          appimage="$(find "$dir" -maxdepth 1 -name '*.AppImage' -print -quit)"
+          [[ -f "$metadata" ]] || { echo "缺少 $metadata" >&2; ls -la "$dir" >&2; exit 1; }
+          [[ -n "$appimage" ]] || { echo "缺少 .AppImage" >&2; exit 1; }
+          grep -q '^path:' "$metadata" || { echo "$metadata 里没有 path" >&2; exit 1; }
+          grep -q '^sha512:' "$metadata" || { echo "$metadata 里没有 sha512" >&2; exit 1; }
+          {
+            echo "metadata=$metadata"
+            echo "appimage=$appimage"
+            echo "appimage_name=$(basename "$appimage")"
+          } >> "$GITHUB_OUTPUT"
+          echo "==> $metadata"
+          cat "$metadata"
+
+      - name: 发布到滚动 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$RELEASE_TAG"
+          ref="${{ needs.prepare.outputs.ref }}"
+          metadata="${{ steps.artifacts.outputs.metadata }}"
+          appimage="${{ steps.artifacts.outputs.appimage }}"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "$ref" \
+              --notes "DeepSeek Harness desktop for Linux，从上游 $ref 构建（unsigned）。应用内更新读取本 release 的 nightly-linux.yml。"
+          fi
+          # 先上传新载荷并覆盖同名项，再清掉上一版遗留的资产，缩短 feed 不完整的窗口。
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$metadata" "$appimage"
+          while read -r name; do
+            case "$name" in
+              *.AppImage|*-linux.yml)
+                [[ "$name" == "$(basename "$metadata")" || "$name" == "$(basename "$appimage")" ]] && continue
+                gh release delete-asset "$tag" "$name" --repo "$GITHUB_REPOSITORY" --yes
+                ;;
+            esac
+          done < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          # release 标题记录来源 ref，prepare 用它判断是否需要重新构建。
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref"
+          echo "==> feed: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"

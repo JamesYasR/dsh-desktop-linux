@@ -65,6 +65,18 @@ deb / rpm 的 `Maintainer:` / `Homepage:` 来自 `upstream/apps/desktop/.env.lin
 **必须用 pnpm 11。** 上游仓库声明 `packageManager: pnpm@11.7.0`，pnpm 11 会自己切到该版本；
 pnpm 9 会在 `pnpm install` 报 `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`。
 
+### 跟进官方新版本
+
+补丁相对固定基线生成，所以上游发新版时先验证补丁还打不打得上，再构建：
+
+```bash
+./scripts/upgrade.sh --check     # 切到最新 tag 并逐个试打（成功则树已就绪，失败则完整回滚并给出重做指引）
+./scripts/upgrade.sh             # 验证 + 构建 + 重装
+```
+
+全自动那条路（CI 构建并发布，应用内「检查更新」直接升级）与补丁冲突时的重做步骤，见
+[docs/upgrading.md](docs/upgrading.md)。
+
 ## Arch 包
 
 PKGBUILD 直接吃上游的 release 源码包，不依赖 `./upstream` 检出：
@@ -108,7 +120,28 @@ Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/
 参考上游在其他平台的实现，补丁 `0013` 把托盘补上：图标常驻，带托盘菜单。
 
 - 找回窗口：托盘菜单「打开」，或再启动一次（第二次启动只聚焦已有实例）。
-- 完全退出：托盘菜单「退出」、菜单栏 `Application` → `Quit`、或 `Ctrl+Q`。
+- 完全退出：托盘菜单「退出」、标题条上的 `Application` → `Quit`、或 `Ctrl+Q`。
+
+### 标题栏与窗口外观
+
+上游只给 Windows 画了自定义标题栏，Linux 落回 GTK 的原生标题栏**加**菜单栏——实测非客户区
+110px，看上去就是那条突兀的系统样式条。补丁 `0018` 让 Linux 走与 Windows 同一条路径：
+
+- **`caption`（默认）**：隐藏原生标题栏与菜单栏，改用 40px 标题条（Web 客户端按
+  `data-windows-titlebar` 布局），窗口按钮由 Electron 的 window-controls overlay 画成系统风格，
+  Application/Edit 变成标题条上的弹出菜单。窗口圆角交给 GNOME。
+- **`rounded`（可选，实验性）**：无边框透明窗口 + 页面自绘按钮 + 四角 12px 圆角。
+- **`native`（回退）**：上游原始行为。
+
+切换只需给启动命令加环境变量，不必重编：
+
+```bash
+DSH_DESKTOP_LINUX_WINDOW_CHROME=rounded /path/to/deepseek-harness-*.AppImage
+```
+
+为什么默认不是 `rounded`：`titleBarOverlay` 与 `transparent` 在当前 Electron 上互斥，而且透明
+在 X11 下实测没有生效（窗口是 32 位 ARGB，但圆角处像素仍不透明），所以系统风格按钮与四角圆角
+只能二选一。细节见 [patches/README.md](patches/README.md)。
 
 ## 验证状态
 
@@ -160,8 +193,13 @@ Arch 包只出未打包目录装进 `/opt/deepseek-harness-desktop`，`/usr/bin/
   修复 [electron#53214](https://github.com/electron/electron/pull/53214) 直到 2026-08-26 才合并，
   而 44.0.0 发布于 08-25）。补丁 `0014` 把 lockfile 解到 44.4.5，代价是 Linux 产物自带的 Chromium
   比上游发布的桌面端更新一点。
-- **没有自动更新。** 上游的强制更新策略通道只认 `desktop-win` / `desktop-mac` 客户端身份，
-  Linux 产物也没有更新通道，所以 Linux 版不嵌入策略、不轮询、不会自己更新。
+- **应用内更新要自己接一条 feed，而且只对 AppImage 生效。** 上游没有 Linux 更新通道，本项目补了
+  一条（补丁 `0016` / `0017`）：在 `apps/desktop/.env.linux` 里设 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN`
+  就会产出带 `app-update.yml` 的产物，应用内的「检查更新」读这条 feed 并替换自身 AppImage；
+  不设则维持上游行为（产物不含更新器）。**只对 AppImage 生效**：安装时 electron-updater 要替换
+  正在运行的那个 AppImage 文件，从解包目录直接跑或 deb/rpm 安装的那份都不走这条路。
+  产物 unsigned，更新只校验 sha512、没有签名校验，所以 feed 必须是发布者自己控制的 HTTPS 源。
+  详见 [docs/updates.md](docs/updates.md)。
 - **没有「安装命令行工具」入口。** 官方桌面端在 macOS / Windows 上能从菜单把自带的 `dsh` CLI 装进
   PATH（macOS 提权建 `/usr/local/bin/dsh` 符号链接，Windows 写用户 PATH）；上游只实现了这两条分支，
   Linux 产物不提供。想在终端用 `dsh` 得自己装，或直接用应用自带的那份
