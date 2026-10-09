@@ -1,0 +1,17 @@
+diff --git a/apps/desktop-host/src/cli.ts b/apps/desktop-host/src/cli.ts
+index 6c890f89..0d91d582 100644
+--- a/apps/desktop-host/src/cli.ts
++++ b/apps/desktop-host/src/cli.ts
+@@ -32,5 +32,11 @@ if (import.meta.main) {
+     await installWindowsCliSignals()
+   }
+   const runtimeDir = resolve(import.meta.dirname, '../../../..')
+-  await runDesktopCli(runtimeDir, join(dirname(runtimeArchivePath(runtimeDir) ?? runtimeDir), 'runtime'))
++  // The support runtime sits in `resources/runtime` beside the application payload: an ASAR build keeps that
++  // payload in `<resources>/app.asar/dsh`, while an unpacked one (Linux disables ASAR so a standalone Node
++  // can read it) keeps it in `<resources>/app/dsh`. The archive's parent and the payload's grandparent are
++  // therefore the same directory.
++  const archive = runtimeArchivePath(runtimeDir)
++  const resources = archive === undefined ? resolve(runtimeDir, '..', '..') : dirname(archive)
++  await runDesktopCli(runtimeDir, join(resources, 'runtime'))
+ }

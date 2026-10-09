@@ -72,6 +72,8 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         '0016-desktop-linux-appimage-update-feed.patch'
         '0017-desktop-linux-runtime-update-feed-override.patch'
         '0018-desktop-linux-window-caption.patch'
+        # 0019 独立于前面所有补丁（只改 desktop-host/src/cli.ts），放最后不影响顺序。
+        '0019-desktop-host-cli-unpacked-support-dir.patch'
         # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
         # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
         'tray-linux.png')
@@ -93,6 +95,7 @@ sha256sums=('f54cf0530ffba0ffb6bd00d08d5459918a1518cb77b22aa2b166a5dba234428a'
             'fafd11d15cb013b4a83fc3bd6b170fe83f34ea9bd962bba903e617577cd5e9a1'
             '6567d07a59ba7c40a8a650112e1d3cffd655bae320ba1682cce74cdc43d813a2'
             'cb813b65e76920141c7cc3bd17a27612621e81ef4012c74f9b60ce5616d52c88'
+            '40a31a1dabbd9c2453c701b57d99461476c6de9296ea2119f32855a39e613e76'
             'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 
 prepare() {

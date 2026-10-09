@@ -7,17 +7,20 @@
 两个补丁共用一个文件时（`electron-builder-config.mjs` 属 0003 与 0013，`src/main.ts` 属 0008 与 0013），
 必须按「基线 + 只有这一个补丁」的隔离树取 diff，否则会把另一个补丁的 hunk 一起带进来。
 
-已验证（0.2.1-alpha.2）：17 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.2`）上，
+已验证（0.2.1-alpha.2）：18 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.2`）上，
 `git apply`（`apply-patches.sh` / CI）与 `patch -Np1`（makepkg 的 `prepare()`）两条路径都全部通过，
 且两条路径产出的树逐字节一致（GNU patch 对叠加补丁会留下 4 个 `.orig` 备份，内容无差异）。
 产物层面的验收由 CI 完成：`pnpm install --frozen-lockfile` 与整条打包流水线跑通后发布到滚动 release。
 产物里 `resources/runtime/cli` 不存在，正是 0004 的 Linux 闸门在起作用。
 
-alpha.1 → alpha.2 有 8 个补丁重做（0002 / 0003 / 0004 / 0005 / 0008 / 0009 / 0016，以及被删除的 0014）。
-根因是上游给 unsigned macOS 加了 ad-hoc 签名：删掉了 `--unsigned` 的平台限制、把「是否嵌入强制更新策略」
-改成条件式、重构了 `prepare-runtime.ts`（拆出 `prepareElectron` / `prepareCli`），并把 `checkPnpm`
-搬进 `tests/fixtures/pnpm-smoke.mjs`。0009 另外修掉一处上游新增的 `execFile(node, …)`：新代码没有料到
-Host 运行时已经被 0008 改成 `DesktopNodeRuntime` 对象。
+alpha.1 → alpha.2 有 8 个补丁重做（0002 / 0003 / 0004 / 0005 / 0008 / 0009 / 0016，以及被删除的 0014），
+另新增 0019。根因是上游给 unsigned macOS 加了 ad-hoc 签名：删掉了 `--unsigned` 的平台限制、
+把「是否嵌入强制更新策略」改成条件式、重构了 `prepare-runtime.ts`（拆出 `prepareElectron` /
+`prepareCli`），并把 `checkPnpm` 搬进 `tests/fixtures/pnpm-smoke.mjs`。重做时踩到两处只有在
+alpha.2 的新代码上才暴露的问题：0009 的 `execFile(node, …)`（新代码没料到 Host 运行时已被 0008
+改成 `DesktopNodeRuntime` 对象），以及 0004 漏装 `runtime/bin/node`（上游把这段拷进 `prepareCli()`
+之后，Linux 跳过整个 `prepareCli` 就把它一起跳掉了）。0019 则是 alpha.2 新增的「CLI 装卸插件」
+冒烟暴露的布局问题。
 
 `0014` 已删除（编号留空位，避免动到别处引用）：上游 alpha.2 的 lockfile 直接解析到 electron `44.7.0`，
 比补丁里钉的 `44.4.5` 还新，那个托盘回归已经不存在。
@@ -193,3 +196,21 @@ AppImage 更新通道接通，细节见 [docs/updates.md](../docs/updates.md)。
   那里会显得鲸鱼顶满方块。所以 `renderLinuxTrayIcon()` 按原比例渲（保留应用图标自身的留白，
   与启动器/任务栏图标观感一致），底图仍然保留，深浅面板都还有对比度。两边同源（都用
   `resources/icon-windows.svg`），改动只在渲染参数上。
+
+## 让未打包布局下的 CLI 也能找到运行时（0019）
+
+`apps/desktop-host/src/cli.ts` 在直接执行时（`import.meta.main`）按 ASAR 布局推 support runtime：
+`<resources>/app.asar/dsh` → 取存档的父目录 → `<resources>/runtime`。`0003` 让 Linux 关掉 ASAR
+（独立 Node 读不了 ASAR 内的文件），dsh 树变成 `<resources>/app/dsh`，同一条式子会算成
+`<resources>/app/runtime`（不存在）。alpha.2 新增的「CLI 装卸插件」冒烟因此报
+
+```
+Error: Cannot find module '<…>/resources/app/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.mjs'
+```
+
+发行版里同样受影响：任何直接跑 `resources/app/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js`
+的场合都找不到 `runtime/`（产品内的 Host 由主进程显式传路径，不走这条 fallback）。
+
+| 补丁 | 覆盖文件 | 内容 |
+|---|---|---|
+| `0019-desktop-host-cli-unpacked-support-dir.patch` | `apps/desktop-host/src/cli.ts` | 只有 `runtimeArchivePath()` 给出存档时才用它的父目录；未打包时从 `runtimeDir` 上跳两级。两种布局都落到 `<resources>/runtime` |
