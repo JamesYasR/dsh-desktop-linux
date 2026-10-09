@@ -211,6 +211,10 @@ Error: Cannot find module '<…>/resources/app/runtime/primary-runtime/dependenc
 发行版里同样受影响：任何直接跑 `resources/app/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js`
 的场合都找不到 `runtime/`（产品内的 Host 由主进程显式传路径，不走这条 fallback）。
 
+难点是「未打包」有两种互不相同的布局，光看路径分不出来：**构建树**里 `runtime/` 与 `dsh/` 同级
+（`<target>/dsh` + `<target>/runtime`，打包期冒烟走的就是它），而**打包后的 Linux** 里它在上一级
+（`<resources>/app/dsh` + `<resources>/runtime`）。所以只能列出候选、按实际存在决定。
+
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
-| `0019-desktop-host-cli-unpacked-support-dir.patch` | `apps/desktop-host/src/cli.ts` | 只有 `runtimeArchivePath()` 给出存档时才用它的父目录；未打包时从 `runtimeDir` 上跳两级。两种布局都落到 `<resources>/runtime` |
+| `0019-desktop-host-cli-unpacked-support-dir.patch` | `apps/desktop-host/src/cli.ts` | 新增 `resolveSupportDir()`：候选 = 存档父目录下的 `runtime/`、以及 `runtimeDir` 上两级的 `runtime/`；取第一个含 `primary-runtime/dependencies/pnpm/bin/pnpm.mjs` 的，都没有时回落到上游原式（错误仍指向原位置）。三种布局实测都对 |

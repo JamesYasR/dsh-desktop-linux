@@ -1,17 +1,40 @@
 diff --git a/apps/desktop-host/src/cli.ts b/apps/desktop-host/src/cli.ts
-index 6c890f89..0d91d582 100644
+index 6c890f89..336b3a72 100644
 --- a/apps/desktop-host/src/cli.ts
 +++ b/apps/desktop-host/src/cli.ts
-@@ -32,5 +32,11 @@ if (import.meta.main) {
+@@ -1,5 +1,6 @@
+ /** Public dsh commands using the immutable runtime carried by the Desktop installation. */
+ 
++import { existsSync } from 'node:fs'
+ import { delimiter, dirname, join, resolve } from 'node:path'
+ import { runCli } from '@deepseek-ai/dsh/lib/bin.js'
+ import { installOfficeEngineResolution, runtimeArchivePath } from './office-engine.ts'
+@@ -26,11 +27,27 @@ export async function runDesktopCli(runtimeDir: string, supportDir: string): Pro
+   })
+ }
+ 
++/**
++ * Locate the support runtime that carries the payload's package manager and Node launcher. Its directory
++ * sits beside the payload in a build tree (`<target>/dsh` and `<target>/runtime`), beside the archive in a
++ * packaged ASAR build, and above the payload in the unpacked packaged build Linux uses because a standalone
++ * Node cannot read ASAR (`<resources>/app/dsh` and `<resources>/runtime`). The layouts are otherwise
++ * indistinguishable, so the payload that exists decides.
++ * @param runtimeDir - Materialized dsh package tree.
++ * @returns Directory holding `primary-runtime`.
++ */
++function resolveSupportDir(runtimeDir: string): string {
++  const archive = runtimeArchivePath(runtimeDir)
++  const candidates = [join(dirname(archive ?? runtimeDir), 'runtime'), resolve(runtimeDir, '..', '..', 'runtime')]
++  return candidates.find(candidate => existsSync(join(candidate, 'primary-runtime', 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')))
++    ?? candidates[0]!
++}
++
+ if (import.meta.main) {
+   if (process.platform === 'win32') {
+     const { installWindowsCliSignals } = await import('./windows-cli-signals.ts')
      await installWindowsCliSignals()
    }
    const runtimeDir = resolve(import.meta.dirname, '../../../..')
 -  await runDesktopCli(runtimeDir, join(dirname(runtimeArchivePath(runtimeDir) ?? runtimeDir), 'runtime'))
-+  // The support runtime sits in `resources/runtime` beside the application payload: an ASAR build keeps that
-+  // payload in `<resources>/app.asar/dsh`, while an unpacked one (Linux disables ASAR so a standalone Node
-+  // can read it) keeps it in `<resources>/app/dsh`. The archive's parent and the payload's grandparent are
-+  // therefore the same directory.
-+  const archive = runtimeArchivePath(runtimeDir)
-+  const resources = archive === undefined ? resolve(runtimeDir, '..', '..') : dirname(archive)
-+  await runDesktopCli(runtimeDir, join(resources, 'runtime'))
++  await runDesktopCli(runtimeDir, resolveSupportDir(runtimeDir))
  }
