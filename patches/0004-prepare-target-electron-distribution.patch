@@ -75,7 +75,7 @@ index 7d290b94..b9a0d404 100644
      }
    } catch (error) {
 diff --git a/apps/desktop/scripts/prepare-runtime.ts b/apps/desktop/scripts/prepare-runtime.ts
-index ba92fef0..4c7a5637 100644
+index ba92fef0..c342f4a6 100644
 --- a/apps/desktop/scripts/prepare-runtime.ts
 +++ b/apps/desktop/scripts/prepare-runtime.ts
 @@ -8,7 +8,8 @@ import { parseArgs } from 'node:util'
@@ -88,7 +88,7 @@ index ba92fef0..4c7a5637 100644
  import { packagingStep } from './packaging-step.mjs'
  import { preparePrimaryRuntime } from './prepare-primary-runtime.ts'
  import { prepareDesktopCli } from './prepare-cli.ts'
-@@ -18,22 +19,27 @@ const BUILD_PATHS = resolveDesktopTargetBuildPaths()
+@@ -18,24 +19,33 @@ const BUILD_PATHS = resolveDesktopTargetBuildPaths()
  const RUNTIME_ROOT = BUILD_PATHS.runtime
  
  type DesktopTarget = ReturnType<typeof desktopTargetPlatform>
@@ -111,14 +111,21 @@ index ba92fef0..4c7a5637 100644
    }).trim()
  }
  
- function prepareCli({ platform, arch }: DesktopTarget): void {
+-function prepareCli({ platform, arch }: DesktopTarget): void {
++/** Install the `node` shell launcher that packaged scripts and plugin installs call. */
++function prepareNodeLauncher(): void {
+   cpSync(join(import.meta.dirname, 'node-bin'), join(RUNTIME_ROOT, 'bin'), { recursive: true })
+   chmodSync(join(RUNTIME_ROOT, 'bin', 'node'), 0o755)
++}
++
++function prepareCli({ platform, arch }: DesktopTarget): void {
 +  // Linux prepares no runtime/cli, so the caller never reaches here. The guard also narrows the platform
 +  // union to the two targets prepareDesktopCli knows.
 +  if (platform === 'linux') throw new Error('desktop runtime: Linux prepares no runtime/cli')
-   cpSync(join(import.meta.dirname, 'node-bin'), join(RUNTIME_ROOT, 'bin'), { recursive: true })
-   chmodSync(join(RUNTIME_ROOT, 'bin', 'node'), 0o755)
    const cli = join(RUNTIME_ROOT, 'cli')
-@@ -50,15 +56,28 @@ function prepareCli({ platform, arch }: DesktopTarget): void {
+   prepareDesktopCli(cli, platform)
+   if (platform === 'darwin') {
+@@ -50,15 +60,30 @@ function prepareCli({ platform, arch }: DesktopTarget): void {
  
  async function main(): Promise<void> {
    const { values } = parseArgs({ options: { 'defer-primary-runtime-smoke': { type: 'boolean', default: false } } })
@@ -140,13 +147,15 @@ index ba92fef0..4c7a5637 100644
 +  const hostRuntime = desktopNodeRuntime(target.platform, electron, join(RUNTIME_ROOT, 'primary-runtime'))
 +  const nodeVersion = hostRuntime.electron ? electronNodeVersion
 +    : execFileSync(hostRuntime.executable, ['-p', 'process.versions.node'], { encoding: 'utf8' }).trim()
-+  // The terminal launcher and its helpers are macOS and Windows only: upstream offers the command
-+  // manager there (main.ts gates its menu entry the same way), the shipped `cli/dsh` is a macOS shell
-+  // script that execs the bundle through `../MacOS/`, and `link-entry` is compiled by clang. Linux
-+  // prepares no `runtime/cli`, so a Linux build must not copy the macOS launcher into the payload.
-+  if (target.platform !== 'linux') {
-+    await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:cli', async () => { prepareCli(target) })
-+  }
++  // The `runtime/bin/node` launcher is shared: every target runs packaged scripts through it. The terminal
++  // launcher and its helpers are macOS and Windows only: upstream offers the command manager there
++  // (main.ts gates its menu entry the same way), the shipped `cli/dsh` is a macOS shell script that execs
++  // the bundle through `../MacOS/`, and `link-entry` is compiled by clang. Linux prepares no `runtime/cli`,
++  // so a Linux build must not copy the macOS launcher into the payload.
++  await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:cli', async () => {
++    prepareNodeLauncher()
++    if (target.platform !== 'linux') prepareCli(target)
++  })
    writeFileSync(join(RUNTIME_ROOT, 'versions.json'), `${JSON.stringify({
      schemaVersion: 1,
      node: nodeVersion,
