@@ -30,6 +30,11 @@ cd ~/dsh-workspace/杂活/dsh-desktop-linux
 4. 幂等键是「上游 ref + 补丁集指纹」，指纹记在 release 正文里（`patches/`、`PKGBUILD`、`assets/`、
    `scripts/` 与 workflow 自身的 git 树哈希）。所以**补丁修好之后推到 master 会立刻重发**，
    不必等定时任务、也不用去动上游 ref；只改 README 这类不在指纹里的文件则不会触发重编。
+5. 重发时**版本号递增**：同一上游版本的第 1 次发布与上游一致，第 2 次起是
+   `<上游版本>.<日期>.<序号>`（例如 `0.2.1-alpha.2.20261009.2`）。这一条是必需的——
+   electron-updater 用 `semver.gt` 比较 feed 版本与已安装应用的 `app.getVersion()`，
+   版本号不变就等于「已是最新」，老用户永远收不到这次补丁修复。序号记在 release 正文的
+   `build-number` 里，每次发布 +1；格式由上游 `desktop-build-version.mjs` 校验，写错会在打包前报错。
 
 前提是构建时 `apps/desktop/.env.linux` 里的地址指向你自己的源（workflow 会自动写）：
 

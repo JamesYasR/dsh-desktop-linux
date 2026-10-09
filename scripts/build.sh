@@ -16,6 +16,11 @@
 # 环境变量：
 #   DSH_DESKTOP_LINUX_HOME  隔离的 dsh 数据目录，默认 /tmp/dsh-desktop-test
 #                           （刻意不读 DSH_HOME，见下方注释）
+#   DSH_DESKTOP_BUILD_VERSION
+#                           发布版本号，默认用上游 package.json 的版本。**同一上游版本重发时必须
+#                           加 <日期>.<序号> 后缀**（如 0.2.1-alpha.2.20261009.2），否则已安装的应用
+#                           按 semver 比较会认为「已是最新」，收不到这次修复。CI 自己算这个值；
+#                           本地要复现 CI 产物时手动给。格式由上游 desktop-build-version.mjs 校验。
 #
 # 产物落在 .desktop-build/targets/linux-x64/unsigned-artifacts/（unsigned 构建）。
 set -euo pipefail

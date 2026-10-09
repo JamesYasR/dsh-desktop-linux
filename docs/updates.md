@@ -66,6 +66,20 @@ deepseek-harness-<version>-linux-x86_64-unsigned.AppImage # 载荷
 `.github/workflows/update-feed.yml` 就是干这件事的流水线：定时扫上游最新 tag，
 打补丁、构建、把这两个文件发到本仓库一个滚动的 `linux-latest` release。
 
+### 版本号：同一上游版本重发时必须递增
+
+`nightly-linux.yml` 的 `version` 会与已安装应用的 `app.getVersion()` 做 `semver.gt` 比较，所以
+**补丁修复后重发同一个上游版本时，版本号必须变大**，否则老用户只会看到「已是最新」。约定沿用上游
+`desktop-build-version.mjs` 的形式：
+
+| 第几次构建该上游版本 | 版本号 | 例 |
+|---|---|---|
+| 第 1 次（新上游 tag） | 与上游一致 | `0.2.1-alpha.2` |
+| 第 2 次起（补丁修复后重发） | `<上游版本>.<日期>.<序号>` | `0.2.1-alpha.2.20261009.2` |
+
+序号记在 release 正文的 `build-number` 里，每次发布 +1；格式写错会在打包前被上游自己的校验拦下。
+本地复现时用 `DSH_DESKTOP_BUILD_VERSION=… ./scripts/build.sh --appimage`。
+
 滚动 tag 而不是 `releases/latest/download` 是有原因的：上游版本号都带
 `-rc.N` / `-alpha.N`，如果按 GitHub 的 prerelease 语义发布，`releases/latest` 就不会指向它，
 feed 会 404。`releases/download/<tag>/` 对任何 release 都成立，所以用固定 tag。

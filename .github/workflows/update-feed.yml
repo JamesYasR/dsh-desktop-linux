@@ -9,6 +9,10 @@ name: linux-update-feed
 #
 # 手动触发可指定 ref（默认取上游最新的 dsh-v* tag）。推到 master 也会跑一次，
 # 补丁改了但上游没发新版时，靠指纹判定需要重发。
+#
+# 版本号：同一上游版本的第 1 次发布与上游一致，第 2 次起带 <日期>.<序号>（上游 desktop-build-version.mjs
+# 规定的形式，写错了打包前就会报错）。不这样做，补丁修复重发时版本号不变，而 electron-updater 用
+# semver 比较 feed 版本与 app.getVersion()，已安装的用户会一直看到「已是最新」。序号记在 release 正文里。
 
 on:
   workflow_dispatch:
@@ -42,7 +46,8 @@ jobs:
     outputs:
       ref: ${{ steps.upstream.outputs.ref }}
       fingerprint: ${{ steps.fingerprint.outputs.value }}
-      skip: ${{ steps.guard.outputs.skip }}
+      build_number: ${{ steps.idempotency.outputs.build }}
+      skip: ${{ steps.idempotency.outputs.skip }}
     steps:
       - name: 解析上游 ref
         id: upstream
@@ -74,22 +79,34 @@ jobs:
           echo "value=$fingerprint" >> "$GITHUB_OUTPUT"
           echo "==> 补丁集指纹：$fingerprint"
 
-      # 幂等：release 标题（上游 ref）与正文里的补丁集指纹都对得上才跳过。
-      - name: 判断是否已有该版本
-        id: guard
-        if: ${{ github.event.inputs.force != 'true' }}
+      # 一次读 release，产出两件事：要不要跳过（幂等），以及这是该上游版本的第几次构建。
+      # 幂等键 = 上游 ref + 补丁集指纹；构建序号决定版本号后缀（见 build job 的构建步骤）。
+      - name: 幂等判断与构建序号
+        id: idempotency
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ github.event.inputs.force }}
+          REF: ${{ steps.upstream.outputs.ref }}
+          FINGERPRINT: ${{ steps.fingerprint.outputs.value }}
         run: |
-          current="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name -q .name 2>/dev/null || true)"
-          recorded="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null \
-            | sed -n 's/.*build-fingerprint: \([0-9a-f]\{8,\}\).*/\1/p' | head -1 || true)"
-          if [[ "$current" == "${{ steps.upstream.outputs.ref }}" \
-            && "$recorded" == "${{ steps.fingerprint.outputs.value }}" ]]; then
-            echo "==> $RELEASE_TAG 已经是 $current（指纹 $recorded），跳过（要重跑请勾选 force）"
+          published_ref="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name -q .name 2>/dev/null || true)"
+          body="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null || true)"
+          published_fingerprint="$(printf '%s' "$body" | sed -n 's/.*build-fingerprint: \([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
+          published_build="$(printf '%s' "$body" | sed -n 's/.*build-number: \([0-9]\{1,\}\).*/\1/p' | head -1)"
+
+          if [[ "$published_ref" == "$REF" ]]; then
+            # 这个上游版本发布过：再发就是补丁修复后的重发，序号 +1（版本号在 build job 里加后缀）。
+            build_number="$(( ${published_build:-1} + 1 ))"
+          else
+            build_number=1
+          fi
+          echo "build=$build_number" >> "$GITHUB_OUTPUT"
+
+          if [[ "$published_ref" == "$REF" && "$published_fingerprint" == "$FINGERPRINT" && "$FORCE" != "true" ]]; then
+            echo "==> $RELEASE_TAG 已经是 $REF（指纹 $published_fingerprint，第 ${published_build:-1} 次构建），跳过（要重跑请勾选 force）"
             echo "skip=1" >> "$GITHUB_OUTPUT"
           else
-            echo "==> 需要构建：已发布=${current:-无}（指纹 ${recorded:-无}）→ 目标=${{ steps.upstream.outputs.ref }}（指纹 ${{ steps.fingerprint.outputs.value }}）"
+            echo "==> 需要构建：已发布=${published_ref:-无}（指纹 ${published_fingerprint:-无}，第 ${published_build:-0} 次）→ 目标=$REF（指纹 $FINGERPRINT），本次第 $build_number 次"
             echo "skip=0" >> "$GITHUB_OUTPUT"
           fi
 
@@ -158,8 +175,26 @@ jobs:
       # AppImage 与 deb 必须**一次**构建：更新元数据只由最后一次 electron-builder 调用生成，
       # 分两次跑后一次会覆盖前一次，AppImage 的更新通道就没了（AppImageUpdater 靠元数据里的
       # files 列表按扩展名挑包，所以两个都在同一份元数据里反而正确）。
+      #
+      # 同一上游版本被重发时（补丁修好后再发）版本号必须递增：electron-updater 用 semver.gt 比较
+      # feed 版本与 app.getVersion()，版本号不变就等于「已是最新」，已安装的用户永远收不到这次修复。
+      # 形式沿用上游 desktop-build-version.mjs 的规定 <product version>.<date>.<index>（由上游自己校验，
+      # 写错了会在打包前就报错）：第 1 次发布与上游版本一致，第 2 次起带 <日期>.<序号>。
       - name: 构建（AppImage + deb）
-        run: ./scripts/build.sh --formats=AppImage,deb
+        env:
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build_number }}
+        run: |
+          product_version="$(node -p 'require("./upstream/apps/desktop/package.json").version')"
+          if (( BUILD_NUMBER > 1 )); then
+            version="${product_version}.$(date -u +%Y%m%d).${BUILD_NUMBER}"
+          else
+            version="$product_version"
+          fi
+          export DSH_DESKTOP_BUILD_VERSION="$version"
+          # 后面的校验与发布步骤也要读它（GITHUB_ENV 只对之后的步骤生效）。
+          echo "DSH_DESKTOP_BUILD_VERSION=$version" >> "$GITHUB_ENV"
+          echo "==> 本次发布版本：$version（上游 $product_version 的第 $BUILD_NUMBER 次构建）"
+          ./scripts/build.sh --formats=AppImage,deb
 
       # 通道名固定为 nightly（update-coordinator.ts），所以元数据是 nightly-linux.yml，
       # 不是 electron-builder 默认的 latest-linux.yml。名字不对应用就查不到更新。
@@ -176,6 +211,10 @@ jobs:
           grep -q '^sha512:' "$metadata" || { echo "$metadata 里没有 sha512" >&2; exit 1; }
           grep -q "$(basename "$appimage")" "$metadata" || { echo "$metadata 没有列出 AppImage" >&2; exit 1; }
           grep -q "$(basename "$deb")" "$metadata" || { echo "$metadata 没有列出 deb" >&2; exit 1; }
+          # 版本号是这一轮新加的输入：元数据里的版本必须与构建时给的一致，否则更新通道会发出错误版本号。
+          metadata_version="$(sed -n 's/^version: //p' "$metadata" | head -1)"
+          [[ "$metadata_version" == "$DSH_DESKTOP_BUILD_VERSION" ]] \
+            || { echo "元数据版本 $metadata_version 与构建版本 $DSH_DESKTOP_BUILD_VERSION 不一致" >&2; exit 1; }
           {
             echo "metadata=$metadata"
             echo "appimage=$appimage"
@@ -193,14 +232,16 @@ jobs:
           tag="$RELEASE_TAG"
           ref="${{ needs.prepare.outputs.ref }}"
           fingerprint="${{ needs.prepare.outputs.fingerprint }}"
+          build_number="${{ needs.prepare.outputs.build_number }}"
+          version="$DSH_DESKTOP_BUILD_VERSION"
           metadata="${{ steps.artifacts.outputs.metadata }}"
           appimage="${{ steps.artifacts.outputs.appimage }}"
           deb="${{ steps.artifacts.outputs.deb }}"
-          # 正文带上补丁集指纹（HTML 注释，界面上看不见）；prepare 的幂等判断读它。
+          # 正文带上补丁集指纹与构建序号（HTML 注释，界面上看不见）；prepare 的幂等判断与序号递增读它们。
           notes="$RUNNER_TEMP/release-notes.md"
-          printf '%s\n\n<!-- build-fingerprint: %s -->\n' \
-            "DeepSeek Harness desktop for Linux，从上游 $ref 构建（unsigned）。AppImage 支持应用内自更新（读本 release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。" \
-            "$fingerprint" > "$notes"
+          printf '%s\n\n<!-- build-fingerprint: %s -->\n<!-- build-number: %s -->\n' \
+            "DeepSeek Harness desktop for Linux，版本 $version（上游 $ref 的第 $build_number 次构建，unsigned）。AppImage 支持应用内自更新（读本 release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。" \
+            "$fingerprint" "$build_number" > "$notes"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
           fi
