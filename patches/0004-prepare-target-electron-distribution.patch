@@ -75,7 +75,7 @@ index 7d290b94..b9a0d404 100644
      }
    } catch (error) {
 diff --git a/apps/desktop/scripts/prepare-runtime.ts b/apps/desktop/scripts/prepare-runtime.ts
-index ba92fef0..b962e52d 100644
+index ba92fef0..4c7a5637 100644
 --- a/apps/desktop/scripts/prepare-runtime.ts
 +++ b/apps/desktop/scripts/prepare-runtime.ts
 @@ -8,7 +8,8 @@ import { parseArgs } from 'node:util'
@@ -88,7 +88,7 @@ index ba92fef0..b962e52d 100644
  import { packagingStep } from './packaging-step.mjs'
  import { preparePrimaryRuntime } from './prepare-primary-runtime.ts'
  import { prepareDesktopCli } from './prepare-cli.ts'
-@@ -18,16 +19,18 @@ const BUILD_PATHS = resolveDesktopTargetBuildPaths()
+@@ -18,22 +19,27 @@ const BUILD_PATHS = resolveDesktopTargetBuildPaths()
  const RUNTIME_ROOT = BUILD_PATHS.runtime
  
  type DesktopTarget = ReturnType<typeof desktopTargetPlatform>
@@ -109,7 +109,16 @@ index ba92fef0..b962e52d 100644
    return execFileSync(executable, ['-p', 'process.versions.node'], {
      encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
    }).trim()
-@@ -50,15 +53,28 @@ function prepareCli({ platform, arch }: DesktopTarget): void {
+ }
+ 
+ function prepareCli({ platform, arch }: DesktopTarget): void {
++  // Linux prepares no runtime/cli, so the caller never reaches here. The guard also narrows the platform
++  // union to the two targets prepareDesktopCli knows.
++  if (platform === 'linux') throw new Error('desktop runtime: Linux prepares no runtime/cli')
+   cpSync(join(import.meta.dirname, 'node-bin'), join(RUNTIME_ROOT, 'bin'), { recursive: true })
+   chmodSync(join(RUNTIME_ROOT, 'bin', 'node'), 0o755)
+   const cli = join(RUNTIME_ROOT, 'cli')
+@@ -50,15 +56,28 @@ function prepareCli({ platform, arch }: DesktopTarget): void {
  
  async function main(): Promise<void> {
    const { values } = parseArgs({ options: { 'defer-primary-runtime-smoke': { type: 'boolean', default: false } } })
