@@ -27,6 +27,9 @@ cd ~/dsh-workspace/杂活/dsh-desktop-linux
 2. 产物里的 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` 指向该 release，所以**应用内「检查更新」会直接
    提示新版本**，用户点两下就升级（AppImage 替换自身）。
 3. 补丁打不上时这条流水线会**失败并通知你**（GitHub 会发邮件），不会发出半成品。
+4. 幂等键是「上游 ref + 补丁集指纹」，指纹记在 release 正文里（`patches/`、`PKGBUILD`、`assets/`、
+   `scripts/` 与 workflow 自身的 git 树哈希）。所以**补丁修好之后推到 master 会立刻重发**，
+   不必等定时任务、也不用去动上游 ref；只改 README 这类不在指纹里的文件则不会触发重编。
 
 前提是构建时 `apps/desktop/.env.linux` 里的地址指向你自己的源（workflow 会自动写）：
 
@@ -56,17 +59,35 @@ grep -A3 '^provider' upstream/apps/desktop/.desktop-build/targets/linux-x64/unsi
 上游动到同一处代码就会冲突。脚本已经打印了步骤，这里是完整版：
 
 1. 定位改动范围：`grep '^diff --git' patches/<失败的那个>.patch`
-2. 看上游这个基线把这几处改成了什么：`git -C upstream log --oneline -5 -- <这些文件>`
-3. 手工把语义搬过去（不是照抄 hunk，要理解上游为什么改）
+2. 看上游这个基线把这几处改成了什么——**先读上游 diff，再动手**：
+   ```bash
+   # 两个 tag 之间改了哪些文件、哪些行（比逐个试打快得多）
+   git ls-remote --tags https://github.com/deepseek-ai/deepseek-harness.git 'dsh-v*'
+   # 或者把两个版本的文件拉下来直接 diff
+   ```
+3. 手工把语义搬过去（不是照抄 hunk，要理解上游为什么改）。**要重做整个补丁时**，按
+   `apply-patches.sh` 的思路建「基线 + 只有这一个补丁」的隔离树：`git apply --reject` → 看 `.rej`
+   → 手改 → 取 diff，避免把别的补丁的 hunk 一起带进来。
 4. 重新生成这一个补丁：
    ```bash
    git -C upstream diff -- <该补丁涉及的文件> > patches/<同名文件>.patch
    ```
-   注意：0001–0015 相对**干净基线**生成、0016–0018 叠加在其上，顺序不能动。
+   注意：0001–0015 相对**干净基线**生成，0016–0018 叠加在其上（0019 独立），顺序不能动。
 5. 同步改动：
    - `PKGBUILD` 里该补丁的 `sha256`；换了基线还要改 `_tag` / `_commit`（Arch 那条路用）
    - `patches/README.md` 里对应补丁的说明
-6. `./scripts/upgrade.sh --check` 重跑到全绿
+6. `./scripts/preflight.sh` 跑到全绿：它校验 PKGBUILD 的 `source`↔`sha256sums`（含源码包哈希）、
+   两条路径打补丁并逐字节比对、以及 CI 会先跑到的 host 面类型检查——**先本地把 CI 会挂的事挂掉**。
+7. `./scripts/upgrade.sh --check` 重跑到全绿
+
+**两条只有踩过才知道的坑**（0.2.1-alpha.1 → alpha.2 那次踩齐了）：
+
+- **「打得上」只说明上下文没变，不说明语义还对。** 上游把一段代码挪进/挪出某个函数时，补丁可能
+  零冲突通过，但我们的假设已经失效：那次上游把 `runtime/bin/node` 的安装挪进了 `prepareCli()`，
+  而我们在 Linux 上整段跳过它——补丁干净，产物里却少了包脚本要用的 `node`。凡是我们**整段跳过
+  或整段替换**的函数，重做时必须逐行核对上游这次往里加了什么。
+- **先跑一遍 `tsc` 再推。** 类型错误是流水线最前面的门，本地跑一次只要一分钟（`pnpm install`
+  在有暖 store 时约 20 秒），比让它烧掉一整轮 CI（10 分钟以上）划算得多。
 
 **重点盯这几个文件**（我们改动最重的地方，上游一动就冲突）：
 `apps/desktop/scripts/electron-builder-config.mjs`、`desktop-package-environment.mjs`、

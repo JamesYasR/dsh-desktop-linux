@@ -16,7 +16,7 @@ system-style window buttons and Application/Edit as popup menus on the caption.<
 | **Cross-platform appearance** | Upstream draws a custom titlebar on Windows only; on Linux it falls back to the GTK titlebar **plus** menu bar (110px of non-client area, measured). Linux now takes the same path: a 40px caption, window buttons drawn by Electron's overlay in the system style, and the native menu bar folded into the caption |
 | **In-application updates** | Upstream's update channel only knows mac/win, and unsigned builds skip update configuration entirely. The AppImage channel is wired here: check → download → verify sha512 → replace itself → restart |
 | **One-command install** | Download the latest release → verify sha512 → install into `~/.local` → create a desktop entry. It installs per user rather than into `/opt` so self-update can replace its own file |
-| **Automatic upstream tracking** | CI scans upstream tags daily and publishes a build when the patches still apply; the in-application updater reads that same release. A conflicting patch fails the run and emails the owner instead of shipping something half-built |
+| **Automatic upstream tracking** | CI scans upstream tags daily and publishes a build when the patches still apply; the in-application updater reads that same release. The idempotency key is the upstream ref **plus a patch-set fingerprint**, so a patch fix pushed to master republishes immediately while documentation-only commits trigger nothing. A conflicting patch fails the run and emails the owner instead of shipping something half-built |
 
 ## Install
 
@@ -42,6 +42,15 @@ Node 22.19+ or 24, and pnpm 11.
 ./scripts/build.sh --appimage    # --deb / --rpm / --all also work
 ```
 
+Before pushing patch changes, run the preflight — it does locally what would otherwise fail CI on
+patches, dependencies, or types:
+
+```bash
+./scripts/preflight.sh           # PKGBUILD self-consistency + both patch routes compared byte-for-byte + host typecheck
+./scripts/preflight.sh --full    # adds CI's build:lib (tsdown included; slow, tens of minutes)
+./scripts/preflight.sh --clean    # remove upstream/ afterwards (node_modules and all, ~2.4G)
+```
+
 ## When upstream releases
 
 Usually nothing: CI tracks it and the application's Check for Updates does the rest. To build locally:
@@ -53,12 +62,17 @@ Usually nothing: CI tracks it and the application's Check for Updates does the r
 
 See [docs/upgrading.md](docs/upgrading.md) and [docs/updates.md](docs/updates.md).
 
+When a patch needs redoing, run `./scripts/preflight.sh` first and then push to master: the patch-set
+fingerprint changes, so CI republishes immediately without waiting for the schedule or touching the
+upstream ref.
+
 ## Patches
 
-18 of them. `0001–0015` are the community porting base (from
+18 of them. `0001–0015` (minus the retired `0014`) are the community porting base, from
 [ffyfox/dsh-desktop-linux](https://github.com/ffyfox/dsh-desktop-linux); this repository keeps its
-commit history). `0016–0018` are ours: the in-application update channel, the runtime feed override,
-and the cross-platform caption. Each patch is documented in [patches/README.md](patches/README.md).
+commit history. `0016–0019` are ours: the in-application update channel, the runtime feed override,
+the cross-platform caption, and the CLI locating its runtime in the unpacked layout. Each patch is
+documented in [patches/README.md](patches/README.md).
 
 ## Known limitations
 

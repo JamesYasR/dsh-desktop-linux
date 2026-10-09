@@ -4,7 +4,11 @@ name: linux-update-feed
 # 应用内「检查更新」读的就是这个 release 里的 nightly-linux.yml，所以这条流水线跑通一次，
 # 之后上游发新版就会自动出现在用户的更新入口里。
 #
-# 手动触发可指定 ref（默认取上游最新的 dsh-v* tag）。
+# 幂等键 = 上游 ref + 补丁集指纹（patches/ PKGBUILD assets/ scripts/ 与 workflow 自身的 git 树哈希）。
+# 只比 ref 是不够的：补丁修好之后 ref 没变，那样会永远跳过、修不进来。指纹记在 release 正文里。
+#
+# 手动触发可指定 ref（默认取上游最新的 dsh-v* tag）。推到 master 也会跑一次，
+# 补丁改了但上游没发新版时，靠指纹判定需要重发。
 
 on:
   workflow_dispatch:
@@ -17,6 +21,8 @@ on:
         description: '即使该版本已发布，也重新构建'
         type: boolean
         default: false
+  push:
+    branches: [master]
   schedule:
     - cron: '17 3 * * *'
 
@@ -35,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ref: ${{ steps.upstream.outputs.ref }}
+      fingerprint: ${{ steps.fingerprint.outputs.value }}
       skip: ${{ steps.guard.outputs.skip }}
     steps:
       - name: 解析上游 ref
@@ -51,7 +58,23 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "==> 上游 ref：$ref"
 
-      # release 标题记着这份产物是从哪个 ref 构建的，用它跳过重复构建。
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # 决定「同样的上游版本要不要重发」的是补丁集，不是 ref：只要 patches/、PKGBUILD、assets/、
+      # scripts/ 或本 workflow 变过，指纹就变。git ls-tree 直接取这些路径的 blob 哈希，比逐个
+      # sha256 少依赖一层 shell 细节。README/文档改动不影响指纹，因此不会触发重编。
+      - name: 计算补丁集指纹
+        id: fingerprint
+        run: |
+          fingerprint="$(git ls-tree -r HEAD -- patches PKGBUILD assets scripts .github/workflows \
+            | sha256sum | cut -c1-16)"
+          [[ -n "$fingerprint" ]] || { echo "算不出补丁集指纹" >&2; exit 1; }
+          echo "value=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "==> 补丁集指纹：$fingerprint"
+
+      # 幂等：release 标题（上游 ref）与正文里的补丁集指纹都对得上才跳过。
       - name: 判断是否已有该版本
         id: guard
         if: ${{ github.event.inputs.force != 'true' }}
@@ -59,10 +82,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           current="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name -q .name 2>/dev/null || true)"
-          if [[ "$current" == "${{ steps.upstream.outputs.ref }}" ]]; then
-            echo "==> $RELEASE_TAG 已经是 $current，跳过（要重跑请勾选 force）"
+          recorded="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null \
+            | sed -n 's/.*build-fingerprint: \([0-9a-f]\{8,\}\).*/\1/p' | head -1 || true)"
+          if [[ "$current" == "${{ steps.upstream.outputs.ref }}" \
+            && "$recorded" == "${{ steps.fingerprint.outputs.value }}" ]]; then
+            echo "==> $RELEASE_TAG 已经是 $current（指纹 $recorded），跳过（要重跑请勾选 force）"
             echo "skip=1" >> "$GITHUB_OUTPUT"
           else
+            echo "==> 需要构建：已发布=${current:-无}（指纹 ${recorded:-无}）→ 目标=${{ steps.upstream.outputs.ref }}（指纹 ${{ steps.fingerprint.outputs.value }}）"
             echo "skip=0" >> "$GITHUB_OUTPUT"
           fi
 
@@ -165,13 +192,17 @@ jobs:
         run: |
           tag="$RELEASE_TAG"
           ref="${{ needs.prepare.outputs.ref }}"
+          fingerprint="${{ needs.prepare.outputs.fingerprint }}"
           metadata="${{ steps.artifacts.outputs.metadata }}"
           appimage="${{ steps.artifacts.outputs.appimage }}"
           deb="${{ steps.artifacts.outputs.deb }}"
+          # 正文带上补丁集指纹（HTML 注释，界面上看不见）；prepare 的幂等判断读它。
+          notes="$RUNNER_TEMP/release-notes.md"
+          printf '%s\n\n<!-- build-fingerprint: %s -->\n' \
+            "DeepSeek Harness desktop for Linux，从上游 $ref 构建（unsigned）。AppImage 支持应用内自更新（读本 release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。" \
+            "$fingerprint" > "$notes"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
-              --title "$ref" \
-              --notes "DeepSeek Harness desktop for Linux，从上游 $ref 构建（unsigned）。AppImage 支持应用内自更新（读本 release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。"
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
           fi
           # 先上传新载荷并覆盖同名项，再清掉上一版遗留的资产，缩短 feed 不完整的窗口。
           gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$metadata" "$appimage" "$deb"
@@ -183,6 +214,6 @@ jobs:
                 ;;
             esac
           done < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-          # release 标题记录来源 ref，prepare 用它判断是否需要重新构建。
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref"
+          # 标题记来源 ref、正文记补丁集指纹；prepare 用这两个一起判断是否需要重新构建。
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
           echo "==> feed: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"

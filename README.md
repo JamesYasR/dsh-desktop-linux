@@ -15,7 +15,7 @@
 | **跨平台外观** | 上游只在 Windows 画自定义标题栏，Linux 会落回 GTK 标题栏**加**菜单栏（实测非客户区 110px）。这里让 Linux 走与 Windows 同一条路径：40px 标题条、Electron overlay 画的系统风格窗口按钮、原生菜单栏收进标题条 |
 | **应用内更新** | 上游更新通道只认 mac/win，而且 unsigned 构建直接跳过更新配置。这里接通了 AppImage 通道：`检查更新 → 下载 → 校验 sha512 → 替换自身 → 重启` |
 | **一条命令装好** | 下载最新发布 → 校验 sha512 → 装进 `~/.local` → 建桌面快捷方式。装在用户目录而不是 `/opt`，是为了让自更新能替换自身文件 |
-| **自动跟进上游** | CI 每天扫上游 tag，补丁能打上就自动构建发布；应用内更新读同一个 release。补丁冲突时流水线失败并发邮件，不会发出半成品 |
+| **自动跟进上游** | CI 每天扫上游 tag，补丁能打上就自动构建发布；应用内更新读同一个 release。幂等键是「上游 ref + 补丁集指纹」，所以补丁修好后推到 master 会立刻重发，只改文档则不会触发重编。补丁冲突时流水线失败并发邮件，不会发出半成品 |
 
 ## 安装
 
@@ -40,6 +40,14 @@ deb 装出来的那份**不能应用内自更新**（自更新要替换正在运
 ./scripts/build.sh --appimage    # 也支持 --deb / --rpm / --all
 ```
 
+改了补丁（或准备推给 CI）之前，先跑一遍预检——它把 CI 会因为补丁/依赖/类型失败的事在本机做掉：
+
+```bash
+./scripts/preflight.sh           # PKGBUILD 自洽 + 两条路径打补丁并逐字节比对 + host 面类型检查
+./scripts/preflight.sh --full    # 再加 CI 同款 build:lib（含 tsdown，慢，十几分钟）
+./scripts/preflight.sh --clean    # 跑完删掉 upstream/（含 node_modules，约 2.4G）
+```
+
 ## 上游发新版了
 
 通常什么都不用做：CI 会跟进，应用里点「检查更新」即可。想在本机直接编：
@@ -51,11 +59,15 @@ deb 装出来的那份**不能应用内自更新**（自更新要替换正在运
 
 细节见 [docs/upgrading.md](docs/upgrading.md) 与 [docs/updates.md](docs/updates.md)。
 
+补丁需要重做时：改完先跑 `./scripts/preflight.sh`，通过后推 master——补丁集指纹变了，CI 会立刻重发，
+既不用等定时任务，也不用去改上游 ref。
+
 ## 补丁
 
-18 个。`0001–0015` 是社区移植基础（来自 [ffyfox/dsh-desktop-linux](https://github.com/ffyfox/dsh-desktop-linux)，
-本仓库保留了其提交历史）；`0016–0018` 是本项目加的：应用内更新通道、运行期换更新源、跨平台标题栏。
-逐个说明在 [patches/README.md](patches/README.md)。
+18 个。`0001–0015`（不含已作废的 `0014`）是社区移植基础，来自
+[ffyfox/dsh-desktop-linux](https://github.com/ffyfox/dsh-desktop-linux)，本仓库保留了其提交历史；
+`0016–0019` 是本项目加的：应用内更新通道、运行期换更新源、跨平台标题栏，以及 CLI 在未打包布局下
+定位运行时。逐个说明在 [patches/README.md](patches/README.md)。
 
 ## 已知限制
 
