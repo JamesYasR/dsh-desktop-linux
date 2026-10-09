@@ -101,5 +101,5 @@ DSH_DESKTOP_LINUX_UPDATE_ORIGIN=http://127.0.0.1:8899 \
 ```
 
 想要看到「有新版本」而不是「已是最新」，把 feed 目录里 `nightly-linux.yml` 的 `version`
-改成比当前应用更高的版本号即可（比如把 `0.2.1-alpha.1` 改成 `0.2.1-alpha.2`）；
+改成比当前应用更高的版本号即可（比如把 `0.2.1-alpha.2` 改成 `0.2.1-alpha.3`）；
 载荷复用同一个 AppImage 就能跑通下载与安装，不必真的编两遍。

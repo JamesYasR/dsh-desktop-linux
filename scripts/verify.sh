@@ -86,7 +86,7 @@ desktop_host_port() {
   return 1
 }
 
-# 当前基线的版本：PKGBUILD 的 _tag 去掉 "dsh-v" 前缀（dsh-v0.2.1-alpha.1 → 0.2.1-alpha.1）。产物文件名、
+# 当前基线的版本：PKGBUILD 的 _tag 去掉 "dsh-v" 前缀（dsh-v0.2.1-alpha.2 → 0.2.1-alpha.2）。产物文件名、
 # 打包后的 package.json 用的都是这个版本。
 #
 # 为什么需要它：只跑了 build.sh --dir 时，$OUT 里还留着上一版基线的 AppImage/deb/rpm，原先的静态

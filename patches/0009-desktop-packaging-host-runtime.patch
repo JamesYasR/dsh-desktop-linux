@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/dev.ts b/apps/desktop/scripts/dev.ts
-index 1ae2f3e..ff3f8e9 100644
+index 1ae2f3e9..ff3f8e98 100644
 --- a/apps/desktop/scripts/dev.ts
 +++ b/apps/desktop/scripts/dev.ts
 @@ -8,6 +8,7 @@ import { parseArgs } from 'node:util'
@@ -39,7 +39,7 @@ index 1ae2f3e..ff3f8e9 100644
  }
  
 diff --git a/apps/desktop/scripts/sign-primary-runtime.ts b/apps/desktop/scripts/sign-primary-runtime.ts
-index d9a9b36..e3b8fc4 100644
+index d9a9b36c..e3b8fc40 100644
 --- a/apps/desktop/scripts/sign-primary-runtime.ts
 +++ b/apps/desktop/scripts/sign-primary-runtime.ts
 @@ -76,7 +76,8 @@ async function main(): Promise<void> {
@@ -53,7 +53,7 @@ index d9a9b36..e3b8fc4 100644
          } else {
            await signWindowsPrimaryRuntime(join(paths.runtime, 'primary-runtime'), { ...options, smoke: smokePrimaryRuntime })
 diff --git a/apps/desktop/scripts/smoke-packaged-runtime.ts b/apps/desktop/scripts/smoke-packaged-runtime.ts
-index 106830b..fb9b03c 100644
+index b9103000..fb9b03c3 100644
 --- a/apps/desktop/scripts/smoke-packaged-runtime.ts
 +++ b/apps/desktop/scripts/smoke-packaged-runtime.ts
 @@ -2,6 +2,7 @@
@@ -64,12 +64,11 @@ index 106830b..fb9b03c 100644
  import { readDesktopRuntime, verifyDesktopRuntime } from '../src/runtime-tree.ts'
  import { verifyWindowsCode } from './windows-runtime-signature.mjs'
  import { smokePreparedRuntime } from './smoke-prepared-runtime.ts'
-@@ -10,14 +11,24 @@ import { resolveDesktopPackageTarget } from './package-target.ts'
+@@ -10,13 +11,24 @@ import { resolveDesktopPackageTarget } from './package-target.ts'
  const paths = resolveDesktopTargetBuildPaths()
  const { values } = parseArgs({ options: { unsigned: { type: 'boolean', default: false } }, allowPositionals: false })
  const target = resolveDesktopBuildTarget()
 -const windows = target === 'win-x64'
--if (values.unsigned && !windows) throw new Error('desktop smoke: unsigned artifacts require Windows')
 +const packaged = resolveDesktopPackageTarget(target)
 +const windows = packaged.platform === 'win32'
 +const linux = packaged.platform === 'linux'
@@ -97,7 +96,7 @@ index 106830b..fb9b03c 100644
 +await smokePreparedRuntime(join(appRoot, 'dsh'),
 +  desktopNodeRuntime(packaged.platform, executable, join(resourcesRuntime, 'primary-runtime')), resourcesRuntime, descriptor)
 diff --git a/apps/desktop/scripts/smoke-prepared-runtime.ts b/apps/desktop/scripts/smoke-prepared-runtime.ts
-index 697f527..53e7f73 100644
+index e6afd574..87729bc7 100644
 --- a/apps/desktop/scripts/smoke-prepared-runtime.ts
 +++ b/apps/desktop/scripts/smoke-prepared-runtime.ts
 @@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
@@ -125,7 +124,7 @@ index 697f527..53e7f73 100644
  ): Promise<void> {
    const cache = await mkdtemp(join(tmpdir(), 'desktop-native-smoke-'))
    const environment = { ...scrubWindowsSigningEnvironment(process.env), NODE_OPTIONS: '',
-@@ -28,12 +28,12 @@ export async function smokePreparedRuntime(
+@@ -28,10 +28,10 @@ export async function smokePreparedRuntime(
    try {
      const archive = runtimeArchivePath(root)
      if (archive !== undefined) await verifyRuntimeArchive(archive, descriptor)
@@ -133,8 +132,14 @@ index 697f527..53e7f73 100644
 +    const { stdout } = await promisify(execFile)(runtime.executable, [
        '--expose-internals', resolve(import.meta.dirname, '../tests/fixtures/runtime-payload-smoke.mjs'), root, resourcesRuntime,
      ], { timeout: 120_000, windowsHide: true,
--      env: desktopNodeEnvironment(node, join(resourcesRuntime, 'bin'), environment) })
-+      env: desktopNodeEnvironment(runtime, join(resourcesRuntime, 'bin'), environment) })
+-      env: desktopNodeEnvironment(node, join(resourcesRuntime, 'bin'), environment) }).catch((error: unknown) => {
++      env: desktopNodeEnvironment(runtime, join(resourcesRuntime, 'bin'), environment) }).catch((error: unknown) => {
+       if (error instanceof Error) {
+         if ('stdout' in error && typeof error.stdout === 'string') process.stdout.write(error.stdout)
+         if ('stderr' in error && typeof error.stderr === 'string') process.stderr.write(error.stderr)
+@@ -42,7 +42,7 @@ export async function smokePreparedRuntime(
+       throw error
+     })
      process.stdout.write(stdout)
 -    await smokeDesktopRuntime(root, node, descriptor, environment, resourcesRuntime)
 +    await smokeDesktopRuntime(root, runtime, descriptor, environment, resourcesRuntime)
@@ -142,10 +147,10 @@ index 697f527..53e7f73 100644
      await rm(cache, { recursive: true, force: true })
    }
 diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
-index f15f10a..3d4046c 100644
+index dec4f8fb..86086a8d 100644
 --- a/apps/desktop/scripts/smoke-runtime.ts
 +++ b/apps/desktop/scripts/smoke-runtime.ts
-@@ -8,20 +8,21 @@ import { promisify } from 'node:util'
+@@ -9,20 +9,21 @@ import { promisify } from 'node:util'
  import { fileURLToPath } from 'node:url'
  import { readPrimaryRuntime, workspaceDependencyPaths } from '../../../packages/skill/tool-workspace-dependencies/src/index.ts'
  import { DesktopHostProcess } from '../src/host-process.ts'
@@ -154,7 +159,7 @@ index f15f10a..3d4046c 100644
  import type { DesktopRuntimeDescriptor } from '../src/runtime-tree.ts'
  
  /**
-  * Check Host startup, its matching frontend, external plugins and real Office-to-PDF conversion.
+  * Check CLI package operations, Host startup, its frontend, external plugins and real Office-to-PDF conversion.
   * @param root - Materialized dsh resources.
 - * @param node - Prepared target Electron executable.
 + * @param node - Node runtime that will host the payload.
@@ -169,8 +174,55 @@ index f15f10a..3d4046c 100644
  ): Promise<void> {
    const home = mkdtempSync(join(tmpdir(), 'dsh-desktop-smoke-'))
    const profile = join(home, 'profiles', 'desktop')
+@@ -59,9 +60,9 @@ export function apply(ctx) {
+     writeFileSync(join(installedPlugin, 'bundle.yml'), `- insert:\n    - id: ${installedName}\n      name: ${installedName}\n      inject: [webServer]\n`)
+     appendFileSync(join(profile, 'pnpm-workspace.yaml'), 'offline: true\nupdateNotifier: false\n')
+     const cli = join(root, 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js')
+-    const runCli = (args: string[]) => promisify(execFile)(node,
++    const runCli = (args: string[]) => promisify(execFile)(node.executable,
+       ['--expose-internals', cli, 'plugin', '--profile', 'desktop', ...args],
+-      { cwd: home, env: { ...hostEnvironment, ELECTRON_RUN_AS_NODE: '1' }, timeout: 120_000, windowsHide: true })
++      { cwd: home, env: { ...hostEnvironment, ...(node.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, timeout: 120_000, windowsHide: true })
+     await runCli(['add', `file:${installedPlugin}`, '--offline', '--ignore-scripts'])
+     const installedEntry = join(profile, 'node_modules', installedName, 'index.js')
+     if (readFileSync(installedEntry, 'utf8') !== readFileSync(join(installedPlugin, 'index.js'), 'utf8')) {
+diff --git a/apps/desktop/tests/fixtures/pnpm-smoke.mjs b/apps/desktop/tests/fixtures/pnpm-smoke.mjs
+index 5d16769a..95970d6e 100644
+--- a/apps/desktop/tests/fixtures/pnpm-smoke.mjs
++++ b/apps/desktop/tests/fixtures/pnpm-smoke.mjs
+@@ -13,7 +13,9 @@ import { delimiter, join } from 'node:path'
+  * @returns {Promise<void>} Resolves after execution and removal of the private installation.
+  */
+ export async function checkPnpm(resourcesRuntime) {
+-  assert.ok(process.versions.electron, 'Run the package-manager smoke with Electron Node mode')
++  // The shipped runtime reaches Node through Electron everywhere but Linux, which ships a standalone one.
++  assert.equal(process.versions.electron !== undefined, process.platform !== 'linux',
++    'Run the package-manager smoke with the runtime that ships for this platform')
+   assert.equal(existsSync(join(resourcesRuntime, 'pnpm')), false, 'Desktop must ship only primary-runtime pnpm')
+   const primary = join(resourcesRuntime, 'primary-runtime')
+   const pnpm = join(primary, 'dependencies', 'pnpm', 'bin', 'pnpm.mjs')
+@@ -36,7 +38,8 @@ export async function checkPnpm(resourcesRuntime) {
+ const assert = require('node:assert/strict')
+ assert.equal(require('desktop-pnpm-smoke-dependency').answer, 42)
+ assert.equal(process.execPath, ${JSON.stringify(process.execPath)})
+-assert.ok(process.versions.electron)
++// The shipped runtime reaches Node through Electron everywhere but Linux, which ships a standalone one.
++assert.equal(process.versions.electron !== undefined, process.platform !== 'linux')
+ assert.ok(process.execArgv.includes('--expose-internals'))
+ assert.equal(typeof require('internal/modules/esm/loader').getOrInitializeCascadedLoader, 'function')
+ console.log('desktop-node-script-ok')
+@@ -46,7 +49,8 @@ console.log('desktop-node-script-ok')
+     const run = args => execFileSync(process.execPath, ['--expose-internals', pnpm, ...args], {
+       cwd: scratch, encoding: 'utf8', timeout: 45_000, windowsHide: true,
+       env: { ...environment, pnpm_config_verify_deps_before_run: 'false',
+-        ELECTRON_RUN_AS_NODE: '1', DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
++        ...(process.versions.electron === undefined ? {} : { ELECTRON_RUN_AS_NODE: '1' }),
++        DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
+         PATH: `${join(resourcesRuntime, 'bin')}${delimiter}${systemBin}`,
+         HOME: scratch, USERPROFILE: scratch, TMP: scratch, TEMP: scratch, TMPDIR: scratch,
+         XDG_CONFIG_HOME: scratch, XDG_CACHE_HOME: scratch, XDG_STATE_HOME: scratch,
 diff --git a/apps/desktop/tests/fixtures/runtime-payload-smoke.mjs b/apps/desktop/tests/fixtures/runtime-payload-smoke.mjs
-index d0d7bb9..fe98a41 100644
+index 3cda38c6..2aec2410 100644
 --- a/apps/desktop/tests/fixtures/runtime-payload-smoke.mjs
 +++ b/apps/desktop/tests/fixtures/runtime-payload-smoke.mjs
 @@ -1,4 +1,4 @@
@@ -179,7 +231,7 @@ index d0d7bb9..fe98a41 100644
  
  import assert from 'node:assert/strict'
  import { execFileSync } from 'node:child_process'
-@@ -13,7 +13,7 @@ const runtime = process.argv[2]
+@@ -14,7 +14,7 @@ const runtime = process.argv[2]
  assert.ok(runtime, 'Pass the filtered resources/dsh directory')
  const root = resolve(runtime)
  const descriptor = JSON.parse(readFileSync(join(root, 'desktop-runtime.json'), 'utf8'))
@@ -188,31 +240,21 @@ index d0d7bb9..fe98a41 100644
  assert.equal(process.platform, descriptor.platform)
  assert.equal(process.arch, descriptor.arch)
  const resourcesRuntime = process.argv[3] ?? join(dirname(root), 'runtime')
-@@ -30,7 +30,8 @@ function checkPnpm() {
-   writeFileSync(join(scratch, 'check.cjs'), `
- const assert = require('node:assert/strict')
- assert.equal(process.execPath, ${JSON.stringify(process.execPath)})
--assert.ok(process.versions.electron)
-+// The shipped runtime reaches Node through Electron everywhere but Linux, which ships a standalone one.
-+assert.equal(process.versions.electron !== undefined, process.platform !== 'linux')
- assert.ok(process.execArgv.includes('--expose-internals'))
- assert.equal(typeof require('internal/modules/esm/loader').getOrInitializeCascadedLoader, 'function')
- console.log('desktop-node-script-ok')
-@@ -41,7 +42,8 @@ console.log('desktop-node-script-ok')
-   const output = execFileSync(process.execPath, ['--expose-internals', pnpm, 'run', 'check'], {
-     cwd: scratch, encoding: 'utf8', timeout: 45_000,
-     env: { ...environment, pnpm_config_verify_deps_before_run: 'false',
--      ELECTRON_RUN_AS_NODE: '1', DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
-+      ...(process.versions.electron === undefined ? {} : { ELECTRON_RUN_AS_NODE: '1' }),
-+      DSH_DESKTOP_NODE_EXECUTABLE: process.execPath,
-       PATH: `${bin}${delimiter}${systemBin}`, HOME: scratch, USERPROFILE: scratch, TMP: scratch, TEMP: scratch, TMPDIR: scratch },
-   })
-   assert.match(output, /desktop-node-script-ok/u)
 diff --git a/apps/desktop/tests/prepared-runtime-smoke.spec.ts b/apps/desktop/tests/prepared-runtime-smoke.spec.ts
-index 2a26447..740d732 100644
+index c4c840c0..35fd4fdb 100644
 --- a/apps/desktop/tests/prepared-runtime-smoke.spec.ts
 +++ b/apps/desktop/tests/prepared-runtime-smoke.spec.ts
-@@ -33,10 +33,10 @@ it('smokes an x64 target verified on an arm64 build host without revalidating ag
+@@ -37,7 +37,8 @@ it('retains payload progress and termination details when the child fails', asyn
+   payload.mockRejectedValueOnce(failure)
+   const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+   const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+-  await expect(smokePreparedRuntime(root, join(root, 'electron'), join(root, 'runtime'), descriptor)).rejects.toBe(failure)
++  await expect(smokePreparedRuntime(root, { executable: join(root, 'electron'), electron: true },
++    join(root, 'runtime'), descriptor)).rejects.toBe(failure)
+   expect(stdout).toHaveBeenCalledWith('payload output\n')
+   expect(stderr).toHaveBeenCalledWith('runtime payload: pty\n')
+   expect(stderr).toHaveBeenCalledWith('runtime payload: killed=true, signal=SIGTERM\n')
+@@ -54,10 +55,10 @@ it('smokes an x64 target verified on an arm64 build host without revalidating ag
    await expect(verifyDesktopRuntime(root, fixture.release.version, { ...target, arch: process.arch }))
      .rejects.toThrow(/incompatible/u)
    const descriptor = await verifyDesktopRuntime(root, fixture.release.version, target)

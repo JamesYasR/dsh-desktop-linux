@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/.env.linux.example b/apps/desktop/.env.linux.example
-index 7185dc9..4b78fcb 100644
+index 7185dc93..4b78fcb7 100644
 --- a/apps/desktop/.env.linux.example
 +++ b/apps/desktop/.env.linux.example
 @@ -12,10 +12,18 @@ DSH_DESKTOP_LINUX_MAINTAINER="ffyfox <299493445+ffyfox@users.noreply.github.com>
@@ -27,7 +27,7 @@ index 7185dc9..4b78fcb 100644
  # A local mirror such as https://registry.npmmirror.com speeds up repeated local packages.
 diff --git a/apps/desktop/scripts/desktop-linux-update.d.mts b/apps/desktop/scripts/desktop-linux-update.d.mts
 new file mode 100644
-index 0000000..d0709fd
+index 00000000..d0709fd8
 --- /dev/null
 +++ b/apps/desktop/scripts/desktop-linux-update.d.mts
 @@ -0,0 +1,16 @@
@@ -49,7 +49,7 @@ index 0000000..d0709fd
 +export function resolveDesktopLinuxUpdateConfig(environment?: NodeJS.ProcessEnv): DesktopLinuxUpdateConfig | undefined
 diff --git a/apps/desktop/scripts/desktop-linux-update.mjs b/apps/desktop/scripts/desktop-linux-update.mjs
 new file mode 100644
-index 0000000..0b7e68e
+index 00000000..0b7e68eb
 --- /dev/null
 +++ b/apps/desktop/scripts/desktop-linux-update.mjs
 @@ -0,0 +1,37 @@
@@ -91,7 +91,7 @@ index 0000000..0b7e68e
 +  return { publicUrl: parsed.href.replace(/\/+$/u, '') }
 +}
 diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
-index 4c95c0e..ea0ff5c 100644
+index 4f7f735b..6c1bc32c 100644
 --- a/apps/desktop/scripts/desktop-package-environment.mjs
 +++ b/apps/desktop/scripts/desktop-package-environment.mjs
 @@ -9,6 +9,7 @@ import { resolveDesktopAutoUpdateConfig } from './desktop-auto-update-environmen
@@ -111,8 +111,8 @@ index 4c95c0e..ea0ff5c 100644
  const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*|LINUX_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
  const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
  
-@@ -85,12 +86,13 @@ export function validateDesktopPackageEnvironment(environment, target, options =
-   if (desktopPlatformEmbedsPolicy(target.platform)) resolveDesktopPolicyEnvironment(environment)
+@@ -101,12 +102,13 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+   }
    if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
    else if (target.platform === 'win32') resolveWindowsPackageSettings(environment)
 -  // Linux artifacts carry no signature and no update channel, so this target is always unsigned.
@@ -128,7 +128,7 @@ index 4c95c0e..ea0ff5c 100644
        throw new Error('desktop package: Linux artifacts are unsigned; pass --unsigned')
      }
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index ffe81af..c5e454a 100644
+index 9171d0f8..64153ad5 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -24,6 +24,7 @@ import { resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
@@ -139,7 +139,7 @@ index ffe81af..c5e454a 100644
  import { desktopTargetBuildPaths, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
  import { installWindowsDirectoryInstaller } from './windows-directory-installer.mjs'
  import { preserveWindowsRuntimeSignature, signWindowsCode } from './windows-runtime-signature.mjs'
-@@ -96,7 +97,11 @@ export function createElectronBuilderConfig(
+@@ -95,7 +96,11 @@ export function createElectronBuilderConfig(
    if (windowsSigner !== undefined) {
      installWindowsNsisBootstrapSigner({ sign: windowsSigner })
    }
@@ -154,7 +154,7 @@ index ffe81af..c5e454a 100644
    // the artifact names, the update feed, and the installed app.getVersion() the updater compares against.
 diff --git a/apps/desktop/tests/desktop-linux-update.spec.ts b/apps/desktop/tests/desktop-linux-update.spec.ts
 new file mode 100644
-index 0000000..f4b9107
+index 00000000..f4b9107a
 --- /dev/null
 +++ b/apps/desktop/tests/desktop-linux-update.spec.ts
 @@ -0,0 +1,43 @@

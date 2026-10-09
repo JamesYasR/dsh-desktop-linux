@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/desktop-upload-plan.ts b/apps/desktop/scripts/desktop-upload-plan.ts
-index 439a4fa..f28ffbe 100644
+index 439a4fa6..f28ffbe8 100644
 --- a/apps/desktop/scripts/desktop-upload-plan.ts
 +++ b/apps/desktop/scripts/desktop-upload-plan.ts
 @@ -21,6 +21,7 @@ const TARGETS = {
@@ -11,7 +11,7 @@ index 439a4fa..f28ffbe 100644
    readonly platform: NodeJS.Platform
    readonly arch: string
 diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
-index 62f4fcb..b8da62a 100644
+index a133ccdc..ac434f5e 100644
 --- a/apps/desktop/scripts/package-target.ts
 +++ b/apps/desktop/scripts/package-target.ts
 @@ -47,14 +47,14 @@ const DESKTOP_UPLOAD_CREDENTIAL_ENV_NAMES = new Set([
@@ -59,15 +59,3 @@ index 62f4fcb..b8da62a 100644
    return target
  }
  
-@@ -234,7 +247,10 @@ export function parseDesktopPackageInvocation(
-   })
-   if (positionals.length > 1) throw new Error('desktop package: expected at most one target')
-   const name = positionals[0] ?? hostTargetName(hostPlatform, hostArch)
--  if (values.unsigned && name !== 'win-x64') throw new Error('desktop package: --unsigned requires win-x64')
-+  // Windows and Linux artifacts are published without a code signature; macOS is not.
-+  if (values.unsigned && name !== 'win-x64' && name !== 'linux-x64') {
-+    throw new Error('desktop package: --unsigned requires win-x64 or linux-x64')
-+  }
-   if (values.unsigned && values['prepare-only']) throw new Error('desktop package: --unsigned cannot use --prepare-only')
-   const requestedBuildVersion = values['build-version']?.trim()
-   if (values['build-version'] !== undefined && (requestedBuildVersion === undefined || requestedBuildVersion === '')) {

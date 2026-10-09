@@ -70,8 +70,7 @@ grep -A3 '^provider' upstream/apps/desktop/.desktop-build/targets/linux-x64/unsi
 
 **重点盯这几个文件**（我们改动最重的地方，上游一动就冲突）：
 `apps/desktop/scripts/electron-builder-config.mjs`、`desktop-package-environment.mjs`、
-`package-target.ts`、`desktop-build-paths.mjs`、`src/main.ts`、`src/update-coordinator.ts`、
-以及 `pnpm-lock.yaml`（补丁 0014 只改它的 4 行）。
+`package-target.ts`、`desktop-build-paths.mjs`、`src/main.ts`、`src/update-coordinator.ts`。
 
 ## 五、更新源怎么选
 

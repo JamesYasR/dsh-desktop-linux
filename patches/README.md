@@ -1,21 +1,26 @@
 # 补丁
 
-按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `5badb15`（tag `dsh-v0.2.1-alpha.1`）。
+按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `d7432673`（tag `dsh-v0.2.1-alpha.2`）。
 
 组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
 互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成；
 两个补丁共用一个文件时（`electron-builder-config.mjs` 属 0003 与 0013，`src/main.ts` 属 0008 与 0013），
 必须按「基线 + 只有这一个补丁」的隔离树取 diff，否则会把另一个补丁的 hunk 一起带进来。
 
-已验证（0.2.1-alpha.1）：15 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.1`）上，
-`patch -Np1`（makepkg 的 `prepare()`）与 `git apply`（`apply-patches.sh` / CI）都干净通过，
-49 个触及文件（44 个改动 + 5 个新增）与开发工作树逐字节一致；源码包本身也与 git 对象核对过
-（14194 个文件逐字节一致）。`pnpm install --frozen-lockfile` 与整条打包流水线在这棵树上通过，
-`build.sh --all` 出齐 AppImage/deb/rpm（0.2.1-alpha.1，electron 44.4.5），`makepkg` 也整包构建成功
-（`dsh-desktop-linux-0.2.1alpha1-1`，25921 个文件）；产物里 `resources/runtime/cli` 不存在，
-正是 0004 的 Linux 闸门在起作用。
-rc.2 → 0.2.1-alpha.1 只有 3 个文件变过（`pnpm-lock.yaml`、`apps/desktop-host/src/index.ts`、
-`apps/desktop/package.json`），对应 0006 / 0008 / 0014 三个补丁重生，其余 12 个逐字节未动。
+已验证（0.2.1-alpha.2）：17 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.2`）上，
+`git apply`（`apply-patches.sh` / CI）与 `patch -Np1`（makepkg 的 `prepare()`）两条路径都全部通过，
+且两条路径产出的树逐字节一致（GNU patch 对叠加补丁会留下 4 个 `.orig` 备份，内容无差异）。
+产物层面的验收由 CI 完成：`pnpm install --frozen-lockfile` 与整条打包流水线跑通后发布到滚动 release。
+产物里 `resources/runtime/cli` 不存在，正是 0004 的 Linux 闸门在起作用。
+
+alpha.1 → alpha.2 有 8 个补丁重做（0002 / 0003 / 0004 / 0005 / 0008 / 0009 / 0016，以及被删除的 0014）。
+根因是上游给 unsigned macOS 加了 ad-hoc 签名：删掉了 `--unsigned` 的平台限制、把「是否嵌入强制更新策略」
+改成条件式、重构了 `prepare-runtime.ts`（拆出 `prepareElectron` / `prepareCli`），并把 `checkPnpm`
+搬进 `tests/fixtures/pnpm-smoke.mjs`。0009 另外修掉一处上游新增的 `execFile(node, …)`：新代码没有料到
+Host 运行时已经被 0008 改成 `DesktopNodeRuntime` 对象。
+
+`0014` 已删除（编号留空位，避免动到别处引用）：上游 alpha.2 的 lockfile 直接解析到 electron `44.7.0`，
+比补丁里钉的 `44.4.5` 还新，那个托盘回归已经不存在。
 
 ## 让 Linux 成为受支持的 target（0001–0007）
 
@@ -48,12 +53,12 @@ rc.2 → 0.2.1-alpha.1 只有 3 个文件变过（`pnpm-lock.yaml`、`apps/deskt
 `0003` 拿去配 electron-builder，`0005` 拿去做打包最前面的预检。按「一个文件只属于一个补丁」，
 规则本身单独成一个补丁。
 
-## 让 Linux 也有托盘（0013–0014）
+## 让 Linux 也有托盘（0013）
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
 | `0013-desktop-linux-tray.patch` | `src/main.ts`、`src/tray.ts`、`src/background-notice.ts`、`scripts/electron-builder-config.mjs`、`scripts/render-tray-icon.ts` | 托盘的创建条件从只认 `win32` 放宽到 `win32 \|\| linux`；Linux 的托盘图是 `resources/tray-linux.png`（单张 PNG，托盘宿主自己缩放到面板；**用应用图标自身的留白，不做 Windows 那 20% 放大**，见「注意」）；首次关窗的一次性提示同样覆盖 Linux —— 它的文案本来就是「可在系统托盘中重新打开窗口」，在 Linux 上这句话只有有了托盘才成立；渲染器除 ICO 之外也输出那张 PNG；electron-builder 的 Linux `extraResources` 把它带进产物的 `resources/` |
-| `0014-electron-version-tray-fix.patch` | `pnpm-lock.yaml` | 把 lockfile 里 electron 的解析从 `44.0.0` 提到 `44.4.5`。上游 `apps/desktop/package.json` 本来就写 `^44.0.0`（caret 就允许 44.4.5），只是 lockfile 把解析钉在 44.0.0 —— 而那个版本的 Linux 托盘在 KDE 与 GNOME 下都注册不上（上游回归，见「注意」）。改动只有 4 行：importer 的 `version`、`packages` 段的版本名与 integrity、`snapshots` 段的版本名；两个版本的依赖范围逐字相同，所以传递依赖一行都不用动 |
+| `0014-electron-version-tray-fix.patch` | `pnpm-lock.yaml` | 已删除，见上文的「alpha.1 → alpha.2」：上游 alpha.2 的 lockfile 直接解析到 electron `44.7.0`，比这个补丁钉的 `44.4.5` 还新 |
 
 托盘 PNG 是二进制，`patches/` 装不下：makepkg 用的是 GNU patch，它不支持 git 的二进制补丁。
 所以这张图作为普通本地 `source` 走，仓库里存在 `assets/tray-linux.png`，由两条路径各自放进
