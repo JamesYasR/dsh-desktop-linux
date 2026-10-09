@@ -17,10 +17,12 @@
 #   DSH_DESKTOP_LINUX_HOME  隔离的 dsh 数据目录，默认 /tmp/dsh-desktop-test
 #                           （刻意不读 DSH_HOME，见下方注释）
 #   DSH_DESKTOP_BUILD_VERSION
-#                           发布版本号，默认用上游 package.json 的版本。**同一上游版本重发时必须
-#                           加 <日期>.<序号> 后缀**（如 0.2.1-alpha.2.20261009.2），否则已安装的应用
-#                           按 semver 比较会认为「已是最新」，收不到这次修复。CI 自己算这个值；
-#                           本地要复现 CI 产物时手动给。格式由上游 desktop-build-version.mjs 校验。
+#                           发布版本号，默认用上游 package.json 的版本；本脚本会把它作为
+#                           `--build-version` 传给打包（只有命令行参数能决定发布版本，见文件末尾注释）。
+#                           **同一上游版本重发时必须加 <日期>.<序号> 后缀**（如
+#                           0.2.1-alpha.2.20261009.2），否则已安装的应用按 semver 比较会认为
+#                           「已是最新」，收不到这次修复。CI 自己算这个值；本地要复现 CI 产物时手动给。
+#                           格式由上游 desktop-build-version.mjs 校验（写错会在打包前报错）。
 #
 # 产物落在 .desktop-build/targets/linux-x64/unsigned-artifacts/（unsigned 构建）。
 set -euo pipefail
@@ -98,5 +100,14 @@ fi
 if [[ -n "$FORMATS" ]]; then
   export DSH_DESKTOP_TARGET_FORMATS="$FORMATS"
 fi
-"$PNPM" --dir "$UPSTREAM/apps/desktop" run "$SCRIPT"
+
+# 发布版本号**只能**由命令行参数决定：上游 package-target.ts 里写明了「发布版本来自命令行参数，
+# 环境变量只负责把它带给子进程」（env 单独给会被忽略，实测 `--check` 仍打印上游版本）。
+# 所以这里把 DSH_DESKTOP_BUILD_VERSION 同时作为 --build-version 传进去；不给就用上游版本。
+if [[ -n "${DSH_DESKTOP_BUILD_VERSION:-}" ]]; then
+  echo "==> 本次发布版本：$DSH_DESKTOP_BUILD_VERSION"
+  "$PNPM" --dir "$UPSTREAM/apps/desktop" run "$SCRIPT" -- --build-version "$DSH_DESKTOP_BUILD_VERSION"
+else
+  "$PNPM" --dir "$UPSTREAM/apps/desktop" run "$SCRIPT"
+fi
 echo "==> 完成，产物见 $UPSTREAM/apps/desktop/.desktop-build/targets/linux-x64/unsigned-artifacts"
