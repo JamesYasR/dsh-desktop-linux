@@ -124,7 +124,13 @@ if [[ -z "$REF" ]]; then
   REF=""
 else
   ok "ref = $REF"
-  if REFRESH=1 "$ROOT/scripts/fetch-upstream.sh" "$REF" >/tmp/preflight-fetch.log 2>&1; then
+  # 已经在同一个 tag 上就复用这棵树：重新 clone 会把 node_modules（2.1G）一起删掉，
+  # 那样 --no-install 永远无效、类型检查也会被静默跳过，而且每次都白下 200M。
+  # 分支 ref 不认这种复用（会移动），走 REFRESH=1 重拉。
+  existing="$(git -C "$UPSTREAM" tag --points-at HEAD 2>/dev/null | head -1 || true)"
+  if [[ "$existing" == "$REF" ]]; then
+    ok "复用已有上游树：$REF（$(git -C "$UPSTREAM" rev-parse --short HEAD)）"
+  elif REFRESH=1 "$ROOT/scripts/fetch-upstream.sh" "$REF" >/tmp/preflight-fetch.log 2>&1; then
     ok "已 checkout $(git -C "$UPSTREAM" rev-parse --short HEAD)"
   else
     bad "拉上游失败，见 /tmp/preflight-fetch.log"
