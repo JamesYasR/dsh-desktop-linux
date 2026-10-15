@@ -1,13 +1,13 @@
 # 补丁
 
-按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `2fbf4359`（tag `dsh-v0.2.1-alpha.3`）。
+按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `86a40220`（tag `dsh-v0.2.1-alpha.4`）。
 
 组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
 互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成；
 两个补丁共用一个文件时（`electron-builder-config.mjs` 属 0003 与 0013，`src/main.ts` 属 0008 与 0013），
 必须按「基线 + 只有这一个补丁」的隔离树取 diff，否则会把另一个补丁的 hunk 一起带进来。
 
-已验证（0.2.1-alpha.3）：18 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.3`）上，
+已验证（0.2.1-alpha.4）：18 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.4`）上，
 `git apply`（`apply-patches.sh` / CI）与 `patch -Np1`（makepkg 的 `prepare()`）两条路径都全部通过，
 且两条路径产出的树逐字节一致（GNU patch 对叠加补丁会留下 4 个 `.orig` 备份，内容无差异）。
 产物层面的验收由 CI 完成：`pnpm install --frozen-lockfile` 与整条打包流水线跑通后发布到滚动 release。
@@ -44,6 +44,11 @@ alpha.2 → alpha.3 有 6 个补丁重做（0001 / 0003 / 0005 / 0009 / 0016 / 0
 
 这次复核的结论：**偏移量为 0 只说明上下文没动**，像 `publish.channel` 这种「上游把常量换成读配置」
 的改动不会有任何冲突提示，只能靠逐个文件读上游 diff（`docs/upgrading.md` 第四节）。
+
+alpha.3 → alpha.4 **一个补丁都没重做**：上游改了 831 个文件，但落在我们补丁覆盖范围里的只有
+`apps/desktop/package.json` 的一行版本号（`0.2.1-alpha.3` → `0.2.1-alpha.4`），而它不在任何 hunk 的
+上下文里，18 个补丁全部零偏移通过；换基线只需改 `PKGBUILD` 的 `_tag`/`_commit`/`pkgver` 与源码包哈希。
+这正是「偏移量 = 免费的语义信号」的用法：先看偏移，再决定读哪几个文件的上游 diff。
 
 ## 让 Linux 成为受支持的 target（0001–0007）
 

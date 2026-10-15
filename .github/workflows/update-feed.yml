@@ -13,6 +13,11 @@ name: linux-update-feed
 # 版本号：同一上游版本的第 1 次发布与上游一致，第 2 次起带 <日期>.<序号>（上游 desktop-build-version.mjs
 # 规定的形式，写错了打包前就会报错）。不这样做，补丁修复重发时版本号不变，而 electron-updater 用
 # semver 比较 feed 版本与 app.getVersion()，已安装的用户会一直看到「已是最新」。序号记在 release 正文里。
+#
+# 发布历史：每次构建都会归档到 tag = 上游 ref 的 release（如 dsh-v0.2.1-alpha.3），那个 release 只追加、
+# 不删除，所以任何历史版本都能直接下载回退；linux-latest 只作为应用内更新读的滚动 feed，只装当前版本。
+# 补发旧版本时，在那个版本的补丁集所在的分支上手动触发（ref=当时的上游 tag、publish_feed=false），
+# 这样只补归档、不动用户正在用的 feed。
 
 on:
   workflow_dispatch:
@@ -25,6 +30,14 @@ on:
         description: '即使该版本已发布，也重新构建'
         type: boolean
         default: false
+      publish_feed:
+        description: '是否更新滚动 feed（linux-latest）；留空=自动（仅当 ref 是最新 dsh-v* tag 时更新）'
+        type: string
+        default: ''
+      build_number:
+        description: '强制指定构建序号（补发历史版本时用）；留空=自动'
+        type: string
+        default: ''
   push:
     branches: [master]
   schedule:
@@ -47,21 +60,32 @@ jobs:
       ref: ${{ steps.upstream.outputs.ref }}
       fingerprint: ${{ steps.fingerprint.outputs.value }}
       build_number: ${{ steps.idempotency.outputs.build }}
+      archive_tag: ${{ steps.idempotency.outputs.archive_tag }}
+      publish_feed: ${{ steps.upstream.outputs.publish_feed }}
       skip: ${{ steps.idempotency.outputs.skip }}
     steps:
       - name: 解析上游 ref
         id: upstream
         env:
           INPUT_REF: ${{ github.event.inputs.ref }}
+          INPUT_PUBLISH_FEED: ${{ github.event.inputs.publish_feed }}
         run: |
+          # 最新 tag 既用于「不指定 ref」时的默认值，也用于判断要不要更新滚动 feed：
+          # 补发历史版本时 ref 不是最新 tag，publish_feed 自动落成 0，只补归档。
+          newest="$(git ls-remote --tags --refs https://github.com/deepseek-ai/deepseek-harness.git 'dsh-v*' \
+            | awk -F/ '{print $NF}' | sort -V | tail -1)"
           ref="$INPUT_REF"
-          if [[ -z "$ref" ]]; then
-            ref="$(git ls-remote --tags --refs https://github.com/deepseek-ai/deepseek-harness.git 'dsh-v*' \
-              | awk -F/ '{print $NF}' | sort -V | tail -1)"
-          fi
+          [[ -n "$ref" ]] || ref="$newest"
           [[ -n "$ref" ]] || { echo "无法确定上游 ref" >&2; exit 1; }
+          case "${INPUT_PUBLISH_FEED:-}" in
+            true|1)  publish_feed=1 ;;
+            false|0) publish_feed=0 ;;
+            *)       [[ "$ref" == "$newest" ]] && publish_feed=1 || publish_feed=0 ;;
+          esac
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "==> 上游 ref：$ref"
+          echo "publish_feed=$publish_feed" >> "$GITHUB_OUTPUT"
+          if (( publish_feed )); then feed_state='更新'; else feed_state='不动'; fi
+          echo "==> 上游 ref：$ref（最新 tag：$newest；滚动 feed：$feed_state）"
 
       - uses: actions/checkout@v6
         with:
@@ -79,8 +103,10 @@ jobs:
           echo "value=$fingerprint" >> "$GITHUB_OUTPUT"
           echo "==> 补丁集指纹：$fingerprint"
 
-      # 一次读 release，产出两件事：要不要跳过（幂等），以及这是该上游版本的第几次构建。
+      # 一次读两个 release，产出三件事：要不要跳过（幂等）、这是该上游版本的第几次构建、归档到哪个 tag。
       # 幂等键 = 上游 ref + 补丁集指纹；构建序号决定版本号后缀（见 build job 的构建步骤）。
+      # - linux-latest：滚动 feed，正文里的 ref/指纹/序号是「当前 feed 是哪个版本的第几次构建」。
+      # - 归档 release（tag = 上游 ref）：历史版本，正文同样记指纹与序号，补发时按它递增。
       - name: 幂等判断与构建序号
         id: idempotency
         env:
@@ -88,25 +114,51 @@ jobs:
           FORCE: ${{ github.event.inputs.force }}
           REF: ${{ steps.upstream.outputs.ref }}
           FINGERPRINT: ${{ steps.fingerprint.outputs.value }}
+          PUBLISH_FEED: ${{ steps.upstream.outputs.publish_feed }}
+          INPUT_BUILD_NUMBER: ${{ github.event.inputs.build_number }}
         run: |
-          published_ref="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name -q .name 2>/dev/null || true)"
-          body="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null || true)"
-          published_fingerprint="$(printf '%s' "$body" | sed -n 's/.*build-fingerprint: \([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
-          published_build="$(printf '%s' "$body" | sed -n 's/.*build-number: \([0-9]\{1,\}\).*/\1/p' | head -1)"
+          # release tag 不能带斜杠（ref 可能是分支名），所以归档 tag 用 ref 去掉斜杠。
+          archive_tag="${REF//\//-}"
+          echo "archive_tag=$archive_tag" >> "$GITHUB_OUTPUT"
 
-          if [[ "$published_ref" == "$REF" ]]; then
-            # 这个上游版本发布过：再发就是补丁修复后的重发，序号 +1（版本号在 build job 里加后缀）。
-            build_number="$(( ${published_build:-1} + 1 ))"
+          feed_ref="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json name -q .name 2>/dev/null || true)"
+          feed_body="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null || true)"
+          feed_fingerprint="$(printf '%s' "$feed_body" | sed -n 's/.*build-fingerprint: \([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
+          feed_build="$(printf '%s' "$feed_body" | sed -n 's/.*build-number: \([0-9]\{1,\}\).*/\1/p' | head -1)"
+
+          archive_body="$(gh release view "$archive_tag" --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null || true)"
+          archive_fingerprint="$(printf '%s' "$archive_body" | sed -n 's/.*build-fingerprint: \([0-9a-f]\{8,\}\).*/\1/p' | head -1)"
+          archive_build="$(printf '%s' "$archive_body" | sed -n 's/.*build-number: \([0-9]\{1,\}\).*/\1/p' | head -1)"
+
+          if [[ -n "$INPUT_BUILD_NUMBER" ]]; then
+            # 补发历史版本时显式给序号，才能重现当时的版本号。
+            build_number="$INPUT_BUILD_NUMBER"
+          elif [[ "$feed_ref" == "$REF" ]]; then
+            # feed 就是这个上游版本：再发就是补丁修复后的重发，序号 +1（两个 release 取大的那个，避免撞名）。
+            base="${feed_build:-1}"
+            [[ -n "$archive_build" && "$archive_build" -gt "$base" ]] && base="$archive_build"
+            build_number="$(( base + 1 ))"
+          elif [[ -n "$archive_build" ]]; then
+            build_number="$(( archive_build + 1 ))"
           else
             build_number=1
           fi
           echo "build=$build_number" >> "$GITHUB_OUTPUT"
 
-          if [[ "$published_ref" == "$REF" && "$published_fingerprint" == "$FINGERPRINT" && "$FORCE" != "true" ]]; then
-            echo "==> $RELEASE_TAG 已经是 $REF（指纹 $published_fingerprint，第 ${published_build:-1} 次构建），跳过（要重跑请勾选 force）"
+          skip=0
+          if [[ "$FORCE" != "true" ]]; then
+            if [[ "$PUBLISH_FEED" == "1" ]]; then
+              [[ "$feed_ref" == "$REF" && "$feed_fingerprint" == "$FINGERPRINT" ]] && skip=1
+            else
+              # 只补归档：该归档 release 已经有同样指纹的构建就没必要重跑。
+              [[ -n "$archive_body" && "$archive_fingerprint" == "$FINGERPRINT" ]] && skip=1
+            fi
+          fi
+          if (( skip )); then
+            echo "==> 跳过：目标已是最新（feed=${feed_ref:-无}@${feed_fingerprint:-无}，归档=${archive_tag}@${archive_fingerprint:-无}，本次指纹 $FINGERPRINT；要重跑请勾选 force）"
             echo "skip=1" >> "$GITHUB_OUTPUT"
           else
-            echo "==> 需要构建：已发布=${published_ref:-无}（指纹 ${published_fingerprint:-无}，第 ${published_build:-0} 次）→ 目标=$REF（指纹 $FINGERPRINT），本次第 $build_number 次"
+            echo "==> 需要构建：feed=${feed_ref:-无}（第 ${feed_build:-0} 次）、归档=${archive_tag}（第 ${archive_build:-0} 次）→ 目标=$REF，本次第 $build_number 次$( (( PUBLISH_FEED )) && echo '，并更新 feed' || echo '，只归档不动 feed')"
             echo "skip=0" >> "$GITHUB_OUTPUT"
           fi
 
@@ -225,11 +277,19 @@ jobs:
           echo "==> deb control"
           dpkg-deb -f "$deb" Package Version Maintainer Architecture
 
-      - name: 发布到滚动 release
+      # 两处发布，职责分开：
+      # - 归档 release（tag = 上游 ref，如 dsh-v0.2.1-alpha.3）：只追加、不删除，是**回退**用的历史版本；
+      #   同一个上游版本重发（补丁修复）时新产物文件名带 <日期>.<序号>，旧的继续留着。
+      # - 滚动 release（linux-latest）：应用内更新读的 feed（nightly-linux.yml + 当前版本的产物），
+      #   只装当前版本，所以这里仍然清掉上一版遗留的资产。
+      # publish_feed=0 时只写归档 release，用户正在用的 feed 一动不动（补发历史版本就是这个场景）。
+      - name: 发布（历史归档 + 滚动 feed）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_FEED: ${{ needs.prepare.outputs.publish_feed }}
+          ARCHIVE_TAG: ${{ needs.prepare.outputs.archive_tag }}
         run: |
-          tag="$RELEASE_TAG"
+          set -euo pipefail
           ref="${{ needs.prepare.outputs.ref }}"
           fingerprint="${{ needs.prepare.outputs.fingerprint }}"
           build_number="${{ needs.prepare.outputs.build_number }}"
@@ -237,24 +297,43 @@ jobs:
           metadata="${{ steps.artifacts.outputs.metadata }}"
           appimage="${{ steps.artifacts.outputs.appimage }}"
           deb="${{ steps.artifacts.outputs.deb }}"
-          # 正文带上补丁集指纹与构建序号（HTML 注释，界面上看不见）；prepare 的幂等判断与序号递增读它们。
+
+          # 正文带上补丁集指纹、构建序号与来源（HTML 注释，界面上看不见）；prepare 的幂等判断与
+          # 序号递增读它们，source-commit 说明这份产物是哪次提交的补丁集构建出来的（回退时用得上）。
           notes="$RUNNER_TEMP/release-notes.md"
-          printf '%s\n\n<!-- build-fingerprint: %s -->\n<!-- build-number: %s -->\n' \
-            "DeepSeek Harness desktop for Linux，版本 $version（上游 $ref 的第 $build_number 次构建，unsigned）。AppImage 支持应用内自更新（读本 release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。" \
-            "$fingerprint" "$build_number" > "$notes"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
+          printf '%s\n\n<!-- build-fingerprint: %s -->\n<!-- build-number: %s -->\n<!-- upstream-ref: %s -->\n<!-- source-commit: %s -->\n' \
+            "DeepSeek Harness desktop for Linux，版本 $version（上游 $ref 的第 $build_number 次构建，unsigned）。AppImage 支持应用内自更新（feed 在 $RELEASE_TAG release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。本 release 是上游 $ref 的历史归档，只追加不删除，可直接下载回退。" \
+            "$fingerprint" "$build_number" "$ref" "$GITHUB_SHA" > "$notes"
+
+          if (( ! PUBLISH_FEED )); then
+            echo "==> 本次只写归档 release $ARCHIVE_TAG，不动 $RELEASE_TAG"
           fi
-          # 先上传新载荷并覆盖同名项，再清掉上一版遗留的资产，缩短 feed 不完整的窗口。
-          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$metadata" "$appimage" "$deb"
-          while read -r name; do
-            case "$name" in
-              *.AppImage|*.deb|*.rpm|*-linux.yml)
-                [[ "$name" == "$(basename "$metadata")" || "$name" == "$(basename "$appimage")" || "$name" == "$(basename "$deb")" ]] && continue
-                gh release delete-asset "$tag" "$name" --repo "$GITHUB_REPOSITORY" --yes
-                ;;
-            esac
-          done < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-          # 标题记来源 ref、正文记补丁集指纹；prepare 用这两个一起判断是否需要重新构建。
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
-          echo "==> feed: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+
+          # 归档 release：只覆盖同名文件，不删任何历史产物（重发时新文件名带日期序号，旧的自然留下）。
+          if ! gh release view "$ARCHIVE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$ARCHIVE_TAG" --repo "$GITHUB_REPOSITORY" --title "$ref" \
+              --target "$GITHUB_SHA" --notes-file "$notes"
+          fi
+          gh release upload "$ARCHIVE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "$metadata" "$appimage" "$deb"
+          gh release edit "$ARCHIVE_TAG" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
+          echo "==> 归档：https://github.com/$GITHUB_REPOSITORY/releases/tag/$ARCHIVE_TAG"
+
+          if (( PUBLISH_FEED )); then
+            tag="$RELEASE_TAG"
+            if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
+            fi
+            # 先上传新载荷并覆盖同名项，再清掉上一版遗留的资产，缩短 feed 不完整的窗口。
+            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$metadata" "$appimage" "$deb"
+            while read -r name; do
+              case "$name" in
+                *.AppImage|*.deb|*.rpm|*-linux.yml)
+                  [[ "$name" == "$(basename "$metadata")" || "$name" == "$(basename "$appimage")" || "$name" == "$(basename "$deb")" ]] && continue
+                  gh release delete-asset "$tag" "$name" --repo "$GITHUB_REPOSITORY" --yes
+                  ;;
+              esac
+            done < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            # 标题记来源 ref、正文记补丁集指纹；prepare 用这两个一起判断是否需要重新构建。
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
+            echo "==> feed: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          fi

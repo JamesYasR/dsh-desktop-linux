@@ -17,6 +17,7 @@ system-style window buttons and Application/Edit as popup menus on the caption.<
 | **In-application updates** | Upstream's update channel only knows mac/win, and unsigned builds skip update configuration entirely. The AppImage channel is wired here: check → download → verify sha512 → replace itself → restart |
 | **One-command install** | Download the latest release → verify sha512 → install into `~/.local` → create a desktop entry. It installs per user rather than into `/opt` so self-update can replace its own file |
 | **Automatic upstream tracking** | CI scans upstream tags daily and publishes a build when the patches still apply; the in-application updater reads that same release. The idempotency key is the upstream ref **plus a patch-set fingerprint**, so a patch fix pushed to master republishes immediately while documentation-only commits trigger nothing; a republish increments the version (`<upstream version>.<date>.<index>`), so already-installed users receive the fix. A conflicting patch fails the run and emails the owner instead of shipping something half-built |
+| **Release history is kept** | Every build is archived in the release tagged after its upstream ref (e.g. `dsh-v0.2.1-alpha.4`), which is append-only, so any past version can be downloaded again to roll back; `linux-latest` is only the rolling feed the in-application updater reads and always holds just the current version. Re-issuing an old version writes the archive without touching the feed — see [docs/updates.md](docs/updates.md) |
 
 ## Install
 

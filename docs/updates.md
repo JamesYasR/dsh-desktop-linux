@@ -71,6 +71,37 @@ deepseek-harness-<version>-linux-x86_64-unsigned.AppImage # 载荷
 `.github/workflows/update-feed.yml` 就是干这件事的流水线：定时扫上游最新 tag，
 打补丁、构建、把这两个文件发到本仓库一个滚动的 `linux-latest` release。
 
+### 发布历史与回退（两处 release 各管一件事）
+
+| release | 装什么 | 会不会被覆盖 |
+|---|---|---|
+| `linux-latest`（滚动） | `nightly-linux.yml` + **当前版本**的 AppImage/deb | 会：每次发布都清掉上一版遗留的资产，缩短 feed 不完整的窗口 |
+| tag = 上游 ref（归档，如 `dsh-v0.2.1-alpha.4`） | 同一次构建的产物（含 yml） | **不会**：只追加，重发时新文件名带 `<日期>.<序号>`，旧产物原样留着 |
+
+所以回退不再依赖「重新编译」：想退回哪一版，就去那一版的归档 release 下载 AppImage/deb。
+`linux-latest` 只保证应用内更新读到当前版本，不承担历史。
+
+**补发历史版本**（例如补上已经不在 feed 里的 `dsh-v0.2.1-alpha.2`）：在承载该版本补丁集的分支上手动触发
+workflow，把 `publish_feed` 设为 `false`（或留空 —— 只要 `ref` 不是最新上游 tag 就自动不动 feed）。
+这样只写归档 release，用户正在用的 feed 一动不动：
+
+```bash
+# ref=要补的上游 tag；publish_feed=false 只归档；build_number 可显式指定，重现当时的版本号
+gh workflow run update-feed.yml --repo JamesYasR/dsh-desktop-linux --ref <补丁集所在分支> \
+  -f ref=dsh-v0.2.1-alpha.2 -f publish_feed=false -f build_number=2
+```
+
+注意：**补丁集必须与那个上游版本匹配**。`patches/` 永远相对最新基线，所以补发旧版本要在「当时的补丁集」
+所在的分支/tag 上触发；本仓库为此保留了 `archive/dsh-v0.2.1-alpha.2` 分支（内容 = 当时的补丁集 + 当前
+workflow）。
+
+已安装的应用即使装回旧版，只要 feed 还指向新版就会继续提示更新 —— 它不会自动降级
+（`allowDowngrade = false`），不想要这次更新就别点。要彻底停掉升级提示，运行期把 feed 指到别处即可：
+
+```bash
+DSH_DESKTOP_LINUX_UPDATE_ORIGIN=http://127.0.0.1:8899 ./deepseek-harness-*.AppImage
+```
+
 ### 版本号：同一上游版本重发时必须递增
 
 `nightly-linux.yml` 的 `version` 会与已安装应用的 `app.getVersion()` 做 `semver.gt` 比较，所以

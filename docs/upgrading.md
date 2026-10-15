@@ -35,6 +35,10 @@ cd ~/dsh-workspace/杂活/dsh-desktop-linux
    electron-updater 用 `semver.gt` 比较 feed 版本与已安装应用的 `app.getVersion()`，
    版本号不变就等于「已是最新」，老用户永远收不到这次补丁修复。序号记在 release 正文的
    `build-number` 里，每次发布 +1；格式由上游 `desktop-build-version.mjs` 校验，写错会在打包前报错。
+6. **发布历史不丢**：每次构建除了更新滚动 feed，还会归档到 tag = 上游 ref 的 release
+   （如 `dsh-v0.2.1-alpha.4`），那个 release 只追加、不删除，所以任何历史版本都能直接下载回退。
+   补发旧版本时用 `workflow_dispatch` 的 `ref` + `publish_feed=false`，只在归档 release 里写，
+   用户正在用的 feed 一动不动 —— 完整做法见 [updates.md](updates.md#发布历史与回退两处-release-各管一件事)。
 
 前提是构建时 `apps/desktop/.env.linux` 里的地址指向你自己的源（workflow 会自动写）：
 
