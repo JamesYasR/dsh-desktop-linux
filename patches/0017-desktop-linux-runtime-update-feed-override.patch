@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
-index 8d6eb80..585d01e 100644
+index 3b83cea0..2198bed4 100644
 --- a/apps/desktop/src/update-coordinator.ts
 +++ b/apps/desktop/src/update-coordinator.ts
 @@ -11,6 +11,22 @@ import { DesktopUpdatePreparationError } from './update-error.ts'
@@ -25,7 +25,7 @@ index 8d6eb80..585d01e 100644
  /** Owns one updater target until its download and installation settle. */
  export class DesktopUpdateCoordinator {
    private current: DesktopUpdateState = { phase: 'idle' }
-@@ -51,11 +67,15 @@ export class DesktopUpdateCoordinator {
+@@ -52,12 +68,16 @@ export class DesktopUpdateCoordinator {
      private readonly publish: (state: DesktopUpdateState) => DesktopUpdateState,
      private readonly beforeRestart: () => Promise<boolean>,
      private readonly updater: AppUpdater = autoUpdater,
@@ -34,6 +34,7 @@ index 8d6eb80..585d01e 100644
 +      && (existsSync(join(process.resourcesPath, 'app-update.yml')) || linuxUpdateFeedOverride() !== undefined),
      private readonly currentVersion: () => string = () => app.getVersion(),
      private readonly downloadResult?: (success: boolean, reason?: string) => void,
+     private readonly channel: 'nightly' | 'latest' = 'nightly',
    ) {
      if (updater === autoUpdater) {
 +      // The packaged feed comes from app-update.yml; an override replaces it for this process only.

@@ -1,13 +1,13 @@
 # 补丁
 
-按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `d7432673`（tag `dsh-v0.2.1-alpha.2`）。
+按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `2fbf4359`（tag `dsh-v0.2.1-alpha.3`）。
 
 组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
 互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成；
 两个补丁共用一个文件时（`electron-builder-config.mjs` 属 0003 与 0013，`src/main.ts` 属 0008 与 0013），
 必须按「基线 + 只有这一个补丁」的隔离树取 diff，否则会把另一个补丁的 hunk 一起带进来。
 
-已验证（0.2.1-alpha.2）：18 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.2`）上，
+已验证（0.2.1-alpha.3）：18 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.3`）上，
 `git apply`（`apply-patches.sh` / CI）与 `patch -Np1`（makepkg 的 `prepare()`）两条路径都全部通过，
 且两条路径产出的树逐字节一致（GNU patch 对叠加补丁会留下 4 个 `.orig` 备份，内容无差异）。
 产物层面的验收由 CI 完成：`pnpm install --frozen-lockfile` 与整条打包流水线跑通后发布到滚动 release。
@@ -25,13 +25,33 @@ alpha.2 的新代码上才暴露的问题：0009 的 `execFile(node, …)`（新
 `0014` 已删除（编号留空位，避免动到别处引用）：上游 alpha.2 的 lockfile 直接解析到 electron `44.7.0`，
 比补丁里钉的 `44.4.5` 还新，那个托盘回归已经不存在。
 
+alpha.2 → alpha.3 有 6 个补丁重做（0001 / 0003 / 0005 / 0009 / 0016 / 0017），其余 12 个逐 hunk 通过，
+而且 `git apply` 报的偏移量全是 0——上下文一字未动，可以放心只按语义复核。上游这次的主题是
+**把原本写死的东西变成配置**，其中一处正是「打得上但会静默失效」：
+
+- 更新通道从写死的 `nightly` 变成可配置（`DSH_DESKTOP_UPDATE_CHANNEL`，缺省仍是 `nightly`），
+  产物清单新增 `dshDesktopUpdateChannel`；`publish` 的 `channel` 也从常量改成读 `update.channel`。
+  **这一处差点静默失效**：我们的 Linux feed 解析器本来只返回 `publicUrl`，上游改成读
+  `update.channel` 之后它就是 `undefined`，electron-builder 会产出 `latest-linux.yml`，而应用内
+  更新器的通道是 `nightly`，于是这个文件永远读不到、更新永远“已是最新”。所以 `0016` 的
+  `resolveDesktopLinuxUpdateConfig()` 现在显式返回 `channel: 'nightly'`，让元数据文件名与更新器通道
+  重新对齐（`0001` 的 JSDoc 联合类型也随之变宽）。
+- `loadDesktopPackageEnvironment()` 被拆成「预设 + `readSettings()`」，`0005` 的 6 个 hunk 全废，
+  只能照新结构重写：`.env.linux` 的选择与 `LINUX_SETTING` 白名单都要落到新函数里，而 Linux 不参与预设。
+- `0003` 的 `publish`、`--skip-notarization` 新打包模式与 `unnotarized-artifacts` 输出目录
+  （`desktopArtifactOutput()`）都动了同一段代码，`0001` / `0016` 的 hunk 位置随之改写。
+- `0017` 的构造器多了一个 `channel` 形参，feed override 的落点挪进 `if (updater === autoUpdater)` 块内。
+
+这次复核的结论：**偏移量为 0 只说明上下文没动**，像 `publish.channel` 这种「上游把常量换成读配置」
+的改动不会有任何冲突提示，只能靠逐个文件读上游 diff（`docs/upgrading.md` 第四节）。
+
 ## 让 Linux 成为受支持的 target（0001–0007）
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
-| `0001-desktop-target-model-add-linux-x64.patch` | `desktop-build-paths.{mjs,d.mts}`、`desktop-auto-update-environment.{mjs,d.mts}` | target 白名单加 `linux-x64`；`desktopTargetPlatform` 返回 `'linux'`；新增 `desktopElectronExecutablePath()` |
+| `0001-desktop-target-model-add-linux-x64.patch` | `desktop-build-paths.{mjs,d.mts}`、`desktop-auto-update-environment.{mjs,d.mts}`、`desktop-release-store.ts` | target 白名单加 `linux-x64`；`desktopTargetPlatform` 返回 `'linux'`；新增 `desktopElectronExecutablePath()`；保留清单的 `target` 枚举（zod）也加 `linux-x64` —— alpha.3 新增的 `retain-desktop-ci.ts` 会把 `resolveDesktopBuildTarget()` 的结果塞进 `DesktopRetainedSource`，枚举不收 Linux 就编译不过（它的注释本来就写着「storage accepts every Desktop target」） |
 | `0002-package-target-add-linux-x64.patch` | `package-target.ts`、`desktop-upload-plan.ts` | 打包目标表加 `linux-x64`；Linux 构建主机校验；放宽 `--unsigned` |
-| `0003-electron-builder-linux-configuration.patch` | `electron-builder-config.mjs` | 允许 unsigned 的 Linux 构建；Linux 关闭 asar；显式 `executableName`；Linux 不嵌入强制更新策略；Linux 的打包格式与包元数据来自发布设置（见 `0011`）；显式钉住 deb/rpm 的 `packageName` / `packageCategory` 与 `linux.synopsis`；用 `appImage.executableArgs: []` 去掉 legacy 工具集写死的 `--no-sandbox`；Linux 图标显式指定为 SVG —— 单个 PNG 文件会被 electron-builder **原样按自身像素尺寸**装进 `hicolor/1024x1024/apps`，而多个发行版的 `hicolor/index.theme` 并不声明该目录（Arch 就没有），图标会解析不到；SVG 落到 `hicolor/scalable/apps`，所有发行版都声明 |
+| `0003-electron-builder-linux-configuration.patch` | `electron-builder-config.mjs` | 允许 unsigned 的 Linux 构建；Linux 关闭 asar；显式 `executableName`；Linux 不嵌入强制更新策略；Linux 的打包格式与包元数据来自发布设置（见 `0011`）；`publish` 的通道名由更新配置给出（`0016` 返回的 `channel: 'nightly'`——上游 alpha.3 起 `publish.channel` 不再写死）；显式钉住 deb/rpm 的 `packageName` / `packageCategory` 与 `linux.synopsis`；用 `appImage.executableArgs: []` 去掉 legacy 工具集写死的 `--no-sandbox`；Linux 图标显式指定为 SVG —— 单个 PNG 文件会被 electron-builder **原样按自身像素尺寸**装进 `hicolor/1024x1024/apps`，而多个发行版的 `hicolor/index.theme` 并不声明该目录（Arch 就没有），图标会解析不到；SVG 落到 `hicolor/scalable/apps`，所有发行版都声明 |
 | `0004-prepare-target-electron-distribution.patch` | `prepare-dsh.ts`、`prepare-runtime.ts` | Electron 分发路径按 target 推导，不再假设「非 mac 即 win32」；打包期 `pnpm install` / 运行时冒烟改用 Host 运行时；`versions.json.node` 记为 payload 实际运行的 Node 版本；Linux 上整块跳过 rc.2 新增的 `prepare:cli`（见「注意」） |
 | `0005-desktop-linux-release-settings.patch` | `desktop-package-environment.{mjs,d.mts}`、`desktop-toolchain-preflight.ts`、`.gitignore`、`.env.linux.example`、`tests/desktop-package-environment.spec.ts` | 支持 `.env.linux`；Linux 不套用 Windows/macOS 专属设置；Linux 不要求策略 origin；修掉 `win32 ? … : macOS` 的隐含假设；Linux 文件白名单加 `MAINTAINER`/`HOMEPAGE`（并从环境里剥掉，保证发布设置只由文件拥有）；打了 rpm 才预检 `rpmbuild` |
 | `0006-desktop-package-linux-scripts.patch` | `apps/desktop/package.json` | `package:linux:x64` / `package:linux:x64:dir` |
@@ -87,8 +107,8 @@ AppImage 更新通道接通，细节见 [docs/updates.md](../docs/updates.md)。
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
-| `0016-desktop-linux-appimage-update-feed.patch` | `scripts/desktop-linux-update.{mjs,d.mts}`（新增）、`scripts/desktop-package-environment.mjs`、`scripts/electron-builder-config.mjs`、`.env.linux.example` | 新增 `resolveDesktopLinuxUpdateConfig()`：读 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN`，校验后交给 electron-builder 的 `publish`。**只在 unsigned 的 Linux 构建上生效**，让产物产出 `app-update.yml` 与 `nightly-linux.yml`；不设则维持上游行为（`publish: null`，无更新器）。地址必须是绝对 URL、HTTPS（或回环上的 HTTP），不带凭据/query/fragment；`.env.linux` 白名单加上这个键，打包前先校验，坏地址在准备阶段就报错而不是打包末段 |
-| `0017-desktop-linux-runtime-update-feed-override.patch` | `src/update-coordinator.ts` | 同一个环境变量在**启动时**覆盖 embed 的 feed（`updater.setFeedURL(...)`），并让 `enabled()` 在 override 存在时也成立。效果：一个 AppImage 可以指向任意 feed —— 本地验证不必为换地址重编，运维换托管也不必重发产物。变量只在这一处读取，未设时行为与上游一致 |
+| `0016-desktop-linux-appimage-update-feed.patch` | `scripts/desktop-linux-update.{mjs,d.mts}`（新增）、`scripts/desktop-package-environment.mjs`、`scripts/electron-builder-config.mjs`、`.env.linux.example` | 新增 `resolveDesktopLinuxUpdateConfig()`：读 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN`，校验后交给 electron-builder 的 `publish`（解析结果带 `channel: 'nightly'`，元数据文件名必须与更新器通道一致，见上文的 alpha.2 → alpha.3）。**只在 unsigned 的 Linux 构建上生效**，让产物产出 `app-update.yml` 与 `nightly-linux.yml`；不设则维持上游行为（`publish: null`，无更新器）。地址必须是绝对 URL、HTTPS（或回环上的 HTTP），不带凭据/query/fragment；`.env.linux` 白名单加上这个键，打包前先校验，坏地址在准备阶段就报错而不是打包末段 |
+| `0017-desktop-linux-runtime-update-feed-override.patch` | `src/update-coordinator.ts` | 同一个环境变量在**启动时**覆盖 embed 的 feed（`updater.setFeedURL(...)`），并让 `enabled()` 在 override 存在时也成立（`setFeedURL` 仍显式给 `channel: 'nightly'`；上游 alpha.3 起构造器另有 `channel` 形参，override 与它落在同一个 `if (updater === autoUpdater)` 块里）。效果：一个 AppImage 可以指向任意 feed —— 本地验证不必为换地址重编，运维换托管也不必重发产物。变量只在这一处读取，未设时行为与上游一致 |
 
 ### 与 0001–0015 不同的地方
 

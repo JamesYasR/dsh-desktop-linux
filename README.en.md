@@ -46,7 +46,7 @@ Before pushing patch changes, run the preflight — it does locally what would o
 patches, dependencies, or types:
 
 ```bash
-./scripts/preflight.sh           # PKGBUILD self-consistency + both patch routes compared byte-for-byte + host typecheck
+./scripts/preflight.sh           # PKGBUILD self-consistency + both patch routes compared byte-for-byte + host typecheck on the patched tree
 ./scripts/preflight.sh --full    # adds CI's build:lib (tsdown included; slow, tens of minutes)
 ./scripts/preflight.sh --clean    # remove upstream/ afterwards (node_modules and all, ~2.4G)
 ```

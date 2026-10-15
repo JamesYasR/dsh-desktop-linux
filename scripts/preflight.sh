@@ -21,7 +21,8 @@
 # host 面跑完 tsdown 才会生成的中间产物——只跑 client 的 tsc 会报一堆假错（remote-mock 的
 # TypertRemoteNamespaceMap 就是这样）。所以默认只跑 host，要全链就 --full。
 #
-# 退出后 ./upstream 默认保留（下次跑只增量安装）；--clean 才会删掉它。
+# 退出后 ./upstream 保留在「已打过补丁」的状态（下次跑只增量安装，第 4 步的类型检查也就有东西可查）；
+# --clean 才会删掉它。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -186,7 +187,16 @@ if [[ -n "$REF" ]]; then
       diff /tmp/preflight-manifest-a.txt /tmp/preflight-manifest-b.txt | head -20 | sed 's/^/      /' >&2 || true
     fi
   fi
+  # 类型检查必须跑在**打过补丁的树**上：上游脚本与测试的类型错误正是这一步要抓的。
+  # 2026-10-15 的教训：这里原本是 `reset_tree` 收尾，于是第 4 步的 tsc 一直在干净的上游树上跑，
+  # alpha.3 新增的 retain-desktop-ci.ts 因补丁 0001 放宽了 target 类型而编译不过，本机却报全绿。
+  # route B 会留下 .orig 备份，所以重新用 git apply 打一遍，第 4 步检查的就是 CI 用的那棵树。
   reset_tree
+  if "$ROOT/scripts/apply-patches.sh" >/tmp/preflight-reapply.log 2>&1; then
+    ok "已把补丁重新打到 upstream/（第 4 步的类型检查跑在这棵树上）"
+  else
+    bad "重新打补丁失败，见 /tmp/preflight-reapply.log（类型检查会跑在干净树上，结果不可信）"
+  fi
 fi
 
 # ---------------------------------------------------------------- 3. 安装依赖

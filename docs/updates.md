@@ -26,8 +26,13 @@ AppImage 启动
                         也就是必须**以 AppImage 方式运行**；解包目录跑起来的是没有更新能力的）
 ```
 
-通道名固定为 `nightly`（`update-coordinator.ts` 里写死），所以元数据文件名是
-`nightly-linux.yml`，不是 electron-builder 默认的 `latest-linux.yml`。发布时两个名字都要对。
+通道名是 `nightly`，所以元数据文件名是 `nightly-linux.yml`，不是 electron-builder 默认的
+`latest-linux.yml`；发布时两个名字都要对。上游 alpha.3 起通道不再写死在
+`update-coordinator.ts` 里，而是打包时由 `publish.channel` 决定、并作为清单字段
+`dshDesktopUpdateChannel` 嵌进产物（缺省仍是 `nightly`，见 `src/update-channel.ts`）。
+我们的 Linux feed 解析器（`0016`）显式返回 `channel: 'nightly'`，让元数据文件名与应用内更新器的
+通道始终对齐——上游改这段代码时最容易在这里静默失效，见
+[patches/README.md](../patches/README.md) 的 alpha.2 → alpha.3 复盘。
 
 ## 配置 feed 地址
 

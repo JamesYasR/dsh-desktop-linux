@@ -27,10 +27,10 @@ index 7185dc93..4b78fcb7 100644
  # A local mirror such as https://registry.npmmirror.com speeds up repeated local packages.
 diff --git a/apps/desktop/scripts/desktop-linux-update.d.mts b/apps/desktop/scripts/desktop-linux-update.d.mts
 new file mode 100644
-index 00000000..d0709fd8
+index 00000000..19af8132
 --- /dev/null
 +++ b/apps/desktop/scripts/desktop-linux-update.d.mts
-@@ -0,0 +1,16 @@
+@@ -0,0 +1,17 @@
 +/** Linux AppImage update feed embedded by one build. */
 +
 +/** Environment variable that supplies the Linux update feed URL. */
@@ -39,6 +39,7 @@ index 00000000..d0709fd8
 +/** Generic update feed one Linux build embeds. */
 +export interface DesktopLinuxUpdateConfig {
 +  readonly publicUrl: string
++  readonly channel: 'nightly'
 +}
 +
 +/**
@@ -49,10 +50,10 @@ index 00000000..d0709fd8
 +export function resolveDesktopLinuxUpdateConfig(environment?: NodeJS.ProcessEnv): DesktopLinuxUpdateConfig | undefined
 diff --git a/apps/desktop/scripts/desktop-linux-update.mjs b/apps/desktop/scripts/desktop-linux-update.mjs
 new file mode 100644
-index 00000000..0b7e68eb
+index 00000000..e7d8518e
 --- /dev/null
 +++ b/apps/desktop/scripts/desktop-linux-update.mjs
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,39 @@
 +/** Resolve the Linux AppImage update feed a build publishes and the packaged application polls. */
 +
 +/** Environment variable that supplies the Linux update feed URL. */
@@ -70,7 +71,7 @@ index 00000000..0b7e68eb
 + * channel metadata (`nightly-linux.yml`) beside the AppImage, and the packaged application polls
 + * that feed through electron-updater's AppImage updater, which replaces the running AppImage file.
 + * @param {NodeJS.ProcessEnv} environment - File-owned release settings.
-+ * @returns {{ publicUrl: string } | undefined} Feed base URL without a trailing slash, or undefined when the build ships no updater.
++ * @returns {{ publicUrl: string, channel: 'nightly' } | undefined} Feed base URL without a trailing slash, or undefined when the build ships no updater.
 + */
 +export function resolveDesktopLinuxUpdateConfig(environment = process.env) {
 +  const value = environment[LINUX_UPDATE_ORIGIN_ENV]?.trim()
@@ -88,10 +89,12 @@ index 00000000..0b7e68eb
 +  if (parsed.username !== '' || parsed.password !== '' || parsed.search !== '' || parsed.hash !== '') {
 +    throw new Error(`desktop linux update: ${LINUX_UPDATE_ORIGIN_ENV} must not carry credentials, a query, or a fragment`)
 +  }
-+  return { publicUrl: parsed.href.replace(/\/+$/u, '') }
++  // The channel names the metadata file electron-builder writes (nightly-linux.yml) and has to match
++  // the channel the packaged application polls, which reads nightly from its manifest.
++  return { publicUrl: parsed.href.replace(/\/+$/u, ''), channel: 'nightly' }
 +}
 diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
-index 4f7f735b..6c1bc32c 100644
+index 453e18c4..e85d8b3d 100644
 --- a/apps/desktop/scripts/desktop-package-environment.mjs
 +++ b/apps/desktop/scripts/desktop-package-environment.mjs
 @@ -9,6 +9,7 @@ import { resolveDesktopAutoUpdateConfig } from './desktop-auto-update-environmen
@@ -99,19 +102,19 @@ index 4f7f735b..6c1bc32c 100644
  import { desktopPlatformEmbedsPolicy, resolveDesktopPolicyEnvironment } from './desktop-policy-environment.mjs'
  import { resolveDesktopLinuxFormats, resolveDesktopLinuxPackageMetadata } from './desktop-linux-packages.mjs'
 +import { resolveDesktopLinuxUpdateConfig } from './desktop-linux-update.mjs'
+ import { validateMacOSSignatureCacheDirectory } from './macos-signature-cache-directory.mjs'
  import { resolveMacOSPackageSettings } from './macos-package-settings.mjs'
  import { resolveWindowsSignatureCacheDirectory } from './windows-signature-cache-directory.mjs'
- import { resolveWindowsPackageSettings } from './windows-package-settings.mjs'
-@@ -17,7 +18,7 @@ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
+@@ -18,7 +19,7 @@ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
  const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
  const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY)$/u
- const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
+ const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
 -const LINUX_SETTING = /^DSH_DESKTOP_LINUX_(?:MAINTAINER|HOMEPAGE)$/u
 +const LINUX_SETTING = /^DSH_DESKTOP_LINUX_(?:MAINTAINER|HOMEPAGE|UPDATE_ORIGIN)$/u
  const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*|LINUX_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
  const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
  
-@@ -101,12 +102,13 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+@@ -145,12 +146,13 @@ export function validateDesktopPackageEnvironment(environment, target, options =
    }
    if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
    else if (target.platform === 'win32') resolveWindowsPackageSettings(environment)
@@ -128,7 +131,7 @@ index 4f7f735b..6c1bc32c 100644
        throw new Error('desktop package: Linux artifacts are unsigned; pass --unsigned')
      }
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index 9171d0f8..64153ad5 100644
+index 0ca4f04d..76067e01 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -24,6 +24,7 @@ import { resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
@@ -136,10 +139,10 @@ index 9171d0f8..64153ad5 100644
  import { desktopPlatformEmbedsPolicy, resolveDesktopPolicyEnvironment } from './desktop-policy-environment.mjs'
  import { resolveDesktopLinuxFormats, resolveDesktopLinuxPackageMetadata } from './desktop-linux-packages.mjs'
 +import { resolveDesktopLinuxUpdateConfig } from './desktop-linux-update.mjs'
- import { desktopTargetBuildPaths, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
+ import { desktopArtifactOutput, desktopTargetBuildPaths, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
  import { installWindowsDirectoryInstaller } from './windows-directory-installer.mjs'
  import { preserveWindowsRuntimeSignature, signWindowsCode } from './windows-runtime-signature.mjs'
-@@ -95,7 +96,11 @@ export function createElectronBuilderConfig(
+@@ -101,7 +102,11 @@ export function createElectronBuilderConfig(
    if (windowsSigner !== undefined) {
      installWindowsNsisBootstrapSigner({ sign: windowsSigner })
    }
@@ -154,14 +157,15 @@ index 9171d0f8..64153ad5 100644
    // the artifact names, the update feed, and the installed app.getVersion() the updater compares against.
 diff --git a/apps/desktop/tests/desktop-linux-update.spec.ts b/apps/desktop/tests/desktop-linux-update.spec.ts
 new file mode 100644
-index 00000000..f4b9107a
+index 00000000..7fb8bbd9
 --- /dev/null
 +++ b/apps/desktop/tests/desktop-linux-update.spec.ts
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,44 @@
 +import { describe, expect, it } from 'vitest'
 +import { LINUX_UPDATE_ORIGIN_ENV, resolveDesktopLinuxUpdateConfig } from '../scripts/desktop-linux-update.mjs'
 +
 +const FEED = 'https://github.com/example/dsh-linux/releases/download/linux-latest'
++const CONFIG = (publicUrl: string) => ({ publicUrl, channel: 'nightly' })
 +
 +describe('Desktop Linux update feed', () => {
 +  it('ships no updater unless the build names a feed', () => {
@@ -170,17 +174,17 @@ index 00000000..f4b9107a
 +  })
 +
 +  it('returns the feed URL without a trailing slash', () => {
-+    expect(resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: FEED })).toEqual({ publicUrl: FEED })
-+    expect(resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: `${FEED}/` })).toEqual({ publicUrl: FEED })
-+    expect(resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: `  ${FEED}  ` })).toEqual({ publicUrl: FEED })
++    expect(resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: FEED })).toEqual(CONFIG(FEED))
++    expect(resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: `${FEED}/` })).toEqual(CONFIG(FEED))
++    expect(resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: `  ${FEED}  ` })).toEqual(CONFIG(FEED))
 +  })
 +
 +  // 回环上的明文 HTTP 是本地更新验证用的；公网 feed 传的是可执行代码，必须是 HTTPS。
 +  it('accepts plain HTTP on a loopback host only', () => {
 +    expect(resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: 'http://127.0.0.1:8899' }))
-+      .toEqual({ publicUrl: 'http://127.0.0.1:8899' })
++      .toEqual(CONFIG('http://127.0.0.1:8899'))
 +    expect(resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: 'http://localhost:8899' }))
-+      .toEqual({ publicUrl: 'http://localhost:8899' })
++      .toEqual(CONFIG('http://localhost:8899'))
 +    expect(() => resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: 'http://feed.example.com' }))
 +      .toThrow(/must use HTTPS/u)
 +    expect(() => resolveDesktopLinuxUpdateConfig({ [LINUX_UPDATE_ORIGIN_ENV]: 'ftp://feed.example.com' }))

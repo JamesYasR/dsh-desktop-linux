@@ -43,7 +43,7 @@ deb 装出来的那份**不能应用内自更新**（自更新要替换正在运
 改了补丁（或准备推给 CI）之前，先跑一遍预检——它把 CI 会因为补丁/依赖/类型失败的事在本机做掉：
 
 ```bash
-./scripts/preflight.sh           # PKGBUILD 自洽 + 两条路径打补丁并逐字节比对 + host 面类型检查
+./scripts/preflight.sh           # PKGBUILD 自洽 + 两条路径打补丁并逐字节比对 + 补丁树上的 host 面类型检查
 ./scripts/preflight.sh --full    # 再加 CI 同款 build:lib（含 tsdown，慢，十几分钟）
 ./scripts/preflight.sh --clean    # 跑完删掉 upstream/（含 node_modules，约 2.4G）
 ```

@@ -82,8 +82,12 @@ grep -A3 '^provider' upstream/apps/desktop/.desktop-build/targets/linux-x64/unsi
    - `PKGBUILD` 里该补丁的 `sha256`；换了基线还要改 `_tag` / `_commit`（Arch 那条路用）
    - `patches/README.md` 里对应补丁的说明
 6. `./scripts/preflight.sh` 跑到全绿：它校验 PKGBUILD 的 `source`↔`sha256sums`（含源码包哈希）、
-   两条路径打补丁并逐字节比对、以及 CI 会先跑到的 host 面类型检查——**先本地把 CI 会挂的事挂掉**。
-7. `./scripts/upgrade.sh --check` 重跑到全绿
+   两条路径打补丁并逐字节比对、以及 host 面类型检查（跑在**已打过补丁的树**上，见该脚本第 2 步末尾）
+   ——**先本地把 CI 会挂的事挂掉**。
+7. 顺手跑一遍受影响的单测与打包自检（都很快）：
+   `pnpm exec vitest run apps/desktop/tests/<相关 spec>`、
+   `pnpm --dir apps/desktop run package:linux:x64 -- --check --build-version <本次版本>`。
+8. `./scripts/upgrade.sh --check` 重跑到全绿
 
 **两条只有踩过才知道的坑**（0.2.1-alpha.1 → alpha.2 那次踩齐了）：
 
@@ -93,6 +97,14 @@ grep -A3 '^provider' upstream/apps/desktop/.desktop-build/targets/linux-x64/unsi
   或整段替换**的函数，重做时必须逐行核对上游这次往里加了什么。
 - **先跑一遍 `tsc` 再推。** 类型错误是流水线最前面的门，本地跑一次只要一分钟（`pnpm install`
   在有暖 store 时约 20 秒），比让它烧掉一整轮 CI（10 分钟以上）划算得多。
+- **上游把常量换成「读配置」时不会有任何冲突提示**（alpha.2 → alpha.3 踩到）。那次上游把
+  `publish.channel` 从写死的 `nightly` 改成读 `update.channel`，并把更新通道做成清单字段：补丁零偏移
+  通过，但如果我们的 feed 解析器不返回 `channel`，它就是 `undefined`，electron-builder 转而产出
+  `latest-linux.yml`，而应用内更新器只认 `nightly`——产物看着正常，更新永远查不到。凡是
+  **我们提供的数据结构被上游新代码消费**的地方，都要按上游新语义逐条对照，不能只看 `git apply` 的结果。
+- **`git apply` 的偏移量是免费的语义信号。** 每个 hunk 都报偏移 0 行，说明那几段上下文一字未动，
+  可以只按语义复核；一旦出现非零偏移，就必须把那段的上游 diff 读一遍（alpha.3 那次 18 个补丁里
+  12 个零偏移，重做的 6 个都在有偏移或直接失败的位置）。
 
 **重点盯这几个文件**（我们改动最重的地方，上游一动就冲突）：
 `apps/desktop/scripts/electron-builder-config.mjs`、`desktop-package-environment.mjs`、
