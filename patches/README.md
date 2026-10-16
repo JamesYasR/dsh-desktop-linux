@@ -279,3 +279,17 @@ Error: Cannot find module '<…>/resources/app/runtime/primary-runtime/dependenc
   写 `userData/desktop/settings.json`。写入是「读原始 JSON → 只合并这两个键 → 临时文件 + rename（0600）」，
   文档损坏时拒绝覆盖；只读路径本来就只回落到默认值。
 - **只有以 AppImage 方式运行才显示回滚入口**（`$APPIMAGE` 存在），因为替换自身依赖它；deb/rpm 安装的那份不显示。
+
+### 上线后实测踩到的两处（已修，别退回）
+
+- **候选判定必须为一版放宽。** `DesktopUpdateCoordinator.doCheck()` 里上游原本写的是
+  `result.isUpdateAvailable && gt(version, currentVersion)`：electron-updater 按 `allowDowngrade`
+  已经把旧版报成可用，但这一层 `gt` 又把它丢掉，于是状态落回 `idle`、界面显示「已是最新」，
+  而锁定与关自动检查**在确认时就已经写盘**，用户看到的就是「没回退成功却显示已锁定」。
+  现在按 feed 类型分支：普通 feed 仍要求 `gt`，回滚 feed 用 `!eq`（`rollbackFeed` 标记由 `useFeed` 设置）。
+- **失败不许留下锁定。** 确认回滚后如果最终什么都没下载（用户取消、或那条 feed 没有目标），
+  `runRollback` 会撤销锁定、把「自动检查更新」恢复成进入前的值并弹窗说明，避免半截状态。
+- **旧版本不认识锁定。** 「记住锁定的 feed」是 0020 才有的：比它早的构建（alpha.2/alpha.3 归档）装回后
+  仍会提示升级到最新版，且自己菜单里没有解锁项。归档正文因此多了一个可选能力位
+  `<!-- update-controls: 0|1 -->`（CI 按 `src/update-rollback.ts` 是否存在探测），目录里映射成
+  `pinCapable`；确认框对 `false` 的版本会先说明这一点。

@@ -1,8 +1,8 @@
 diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
-index de4b9c3a..a0f54703 100644
+index de4b9c3a..4eaf04df 100644
 --- a/apps/desktop/src/locale.ts
 +++ b/apps/desktop/src/locale.ts
-@@ -102,6 +102,24 @@ export const en = {
+@@ -102,6 +102,26 @@ export const en = {
    welcomeKeyFailed: 'Could not save the API key. Please try again.',
    welcomeContinueFailed: 'Could not open the workspace. Please try again.',
    checkUpdatesMenu: 'Check for Updates…',
@@ -22,12 +22,14 @@ index de4b9c3a..a0f54703 100644
 +  rollbackRiskSessionFormat: 'sessions written now may not open afterwards',
 +  rollbackRiskStorageSchema: 'stored data written now may not open afterwards',
 +  rollbackConfirmDownload: 'Roll Back and Restart',
++  rollbackAborted: 'Nothing was downloaded, so the version pin was released and the packaged update feed is active again.',
++  rollbackNoPinDetail: 'This version predates the version pin: after rolling back it keeps offering the newest release, and its own menu has no unlock entry. Do not accept that prompt to stay on it.',
 +  rollbackUnlockMenu: 'Unlock Version (pinned to {version})',
 +  rollbackUnlocked: 'Version pin removed. The packaged update feed is active again.',
    reloadPageMenu: 'Reload Page',
    restartAppHostMenu: 'Restart App and Host',
    updateCheckFailedTitle: 'Update Check Failed',
-@@ -277,6 +295,24 @@ export const zh = {
+@@ -277,6 +297,26 @@ export const zh = {
    welcomeKeyFailed: '无法保存 API 密钥，请重试。',
    welcomeContinueFailed: '无法打开工作区，请重试。',
    checkUpdatesMenu: '检查更新…',
@@ -47,13 +49,15 @@ index de4b9c3a..a0f54703 100644
 +  rollbackRiskSessionFormat: '现在写入的会话回滚后可能打不开',
 +  rollbackRiskStorageSchema: '现在写入的存储数据回滚后可能打不开',
 +  rollbackConfirmDownload: '回滚并重启',
++  rollbackAborted: '没有下载任何版本，已解除版本锁定，恢复使用产物自带的更新源。',
++  rollbackNoPinDetail: '这个版本早于「版本锁定」功能：装回后它仍会提示升级到最新版，旧版本里也没有解除锁定的菜单项。想留在旧版就别点那个提示。',
 +  rollbackUnlockMenu: '解除版本锁定（当前锁定 {version}）',
 +  rollbackUnlocked: '已解除版本锁定，恢复使用产物自带的更新源。',
    reloadPageMenu: '刷新页面',
    restartAppHostMenu: '重启应用与 Host',
    updateCheckFailedTitle: '更新检查失败',
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index dbe0f4f4..2f2cb0ae 100644
+index dbe0f4f4..bdb0b9d7 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
 @@ -4,6 +4,7 @@ import { LINUX_CHROME_ARGUMENT, resolveLinuxWindowChrome } from './linux-window.
@@ -129,7 +133,7 @@ index dbe0f4f4..2f2cb0ae 100644
      ...process.platform === 'darwin' || process.platform === 'win32'
        ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
      ...development ? [
-@@ -1004,6 +1031,95 @@ async function main(): Promise<void> {
+@@ -1004,6 +1031,109 @@ async function main(): Promise<void> {
      { role: 'toggleDevTools', visible: false },
      { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
    ]
@@ -173,6 +177,8 @@ index dbe0f4f4..2f2cb0ae 100644
 +    const compatibility = rollbackCompatibility(candidate,
 +      rollbackCatalog === undefined ? undefined : findCatalogVersion(rollbackCatalog, app.getVersion()))
 +    const detail = [formatDesktopMessage(messages.rollbackConfirmDetail, { version: candidate.version })]
++    // A build older than the pin feature would forget the pin and keep prompting for the newest release.
++    if (candidate.pinCapable === false) detail.push(messages.rollbackNoPinDetail)
 +    if (!compatibility.safe) {
 +      detail.push(messages.rollbackConfirmUnsafe, ...compatibility.risks.map(risk => `• ${rollbackRiskText(risk)}`))
 +    }
@@ -187,6 +193,7 @@ index dbe0f4f4..2f2cb0ae 100644
 +      cancelId: 1,
 +    })
 +    if (answer.response !== 0) return
++    const previousAutomaticChecks = automaticChecks
 +    // Staying on the older release is the point, so polling stops until the user asks for it again.
 +    setAutomaticChecks(false)
 +    pinnedFeedUrl = candidate.feedUrl
@@ -195,6 +202,17 @@ index dbe0f4f4..2f2cb0ae 100644
 +    refreshApplicationMenu()
 +    // Reuse the ordinary flow end to end: check, confirm the download, download, then restart to install.
 +    await openUpdatePrompt(true)
++    const state = updates.state
++    if (state.phase === 'ready' || state.phase === 'installing') return
++    // Nothing was downloaded, so the rollback never started: a pin without a rollback would only mislead.
++    pinnedFeedUrl = undefined
++    automaticChecks = previousAutomaticChecks
++    persistUpdatePreferences({ pinnedFeedUrl: undefined, automaticChecks: previousAutomaticChecks })
++    if (packagedFeedUrl !== undefined) updates.useFeed(packagedFeedUrl, false)
++    updateSchedule.setAutomatic(previousAutomaticChecks)
++    refreshApplicationMenu()
++    const aborted = currentDesktopLocale().messages
++    await ordinaryMessageBox({ type: 'warning', title: aborted.rollbackConfirmTitle, message: aborted.rollbackAborted })
 +  }
 +  const rollbackItems = (): MenuItemConstructorOptions[] => {
 +    const messages = currentDesktopLocale().messages
@@ -225,7 +243,7 @@ index dbe0f4f4..2f2cb0ae 100644
    const refreshApplicationMenu = (): void => {
      // Caption platforms show Application and Edit in the page's caption, so the native menu bar goes away.
      Menu.setApplicationMenu(Menu.buildFromTemplate(captionChrome ? devToolsItems : [{
-@@ -1013,6 +1129,21 @@ async function main(): Promise<void> {
+@@ -1013,6 +1143,21 @@ async function main(): Promise<void> {
      tray?.relabel()
    }
    refreshApplicationMenu()
@@ -341,10 +359,28 @@ index a4bb67b3..0a42686a 100644
 +  return readDesktopSettings(userData)
 +}
 diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
-index 2198bed4..9d104b04 100644
+index 2198bed4..6f6bcbba 100644
 --- a/apps/desktop/src/update-coordinator.ts
 +++ b/apps/desktop/src/update-coordinator.ts
-@@ -116,6 +116,23 @@ export class DesktopUpdateCoordinator {
+@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
+ import { join } from 'node:path'
+ import { app } from 'electron'
+ import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
+-import { gt, valid } from 'semver'
++import { eq, gt, valid } from 'semver'
+ import type { DesktopUpdateState } from './ipc.ts'
+ import { DesktopUpdateHttpExecutor } from './update-http-executor.ts'
+ import { DesktopUpdatePreparationError } from './update-error.ts'
+@@ -32,6 +32,8 @@ export class DesktopUpdateCoordinator {
+   private current: DesktopUpdateState = { phase: 'idle' }
+   private candidate: string | undefined
+   private downloaded = false
++  /** True while a user-selected rollback feed is active, where an older version is the intended target. */
++  private rollbackFeed = false
+   private disposed = false
+   private checkOperation: Promise<DesktopUpdateState> | undefined
+   private downloadOperation: Promise<DesktopUpdateState> | undefined
+@@ -116,6 +118,24 @@ export class DesktopUpdateCoordinator {
      return result
    }
  
@@ -363,17 +399,32 @@ index 2198bed4..9d104b04 100644
 +    // Assigning a channel re-enables downgrade inside electron-updater, so re-assert both switches after it.
 +    this.updater.allowPrerelease = this.channel === 'nightly'
 +    this.updater.allowDowngrade = allowDowngrade
++    this.rollbackFeed = allowDowngrade
 +  }
 +
    /**
     * @param version - Version shown in the user's download confirmation.
     * @returns Download readiness or failure, without authorizing installation.
+@@ -210,7 +230,12 @@ export class DesktopUpdateCoordinator {
+       const version = result.updateInfo.version
+       if (valid(version) === null) throw new Error('desktop update: feed version is invalid')
+       if (this.channel === 'latest' && version.includes('-')) throw new Error('desktop update: latest feed contains a prerelease')
+-      this.candidate = result.isUpdateAvailable && gt(version, this.currentVersion()) ? version : undefined
++      // A rollback feed deliberately serves an older version; the ordinary feed must still move forward.
++      // electron-updater already reports an older release as available only when downgrades are allowed.
++      const selectable = this.rollbackFeed
++        ? !eq(version, this.currentVersion())
++        : gt(version, this.currentVersion())
++      this.candidate = result.isUpdateAvailable && selectable ? version : undefined
+       return this.setState(this.candidate === undefined ? { phase: 'idle' } : { phase: 'available', version })
+     } catch (error) {
+       return this.failure(error, 'check')
 diff --git a/apps/desktop/src/update-rollback.ts b/apps/desktop/src/update-rollback.ts
 new file mode 100644
-index 00000000..b2a66af8
+index 00000000..4cce1acc
 --- /dev/null
 +++ b/apps/desktop/src/update-rollback.ts
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,178 @@
 +/** Read the archived-version catalog that backs a user-selected rollback to an earlier release. */
 +
 +import { lt, valid } from 'semver'
@@ -393,6 +444,8 @@ index 00000000..b2a66af8
 +  readonly sessionFormatVersion?: number
 +  readonly storageSchemaVersion?: number
 +  readonly sessionQuerySchemaVersion?: number
++  /** Whether that release remembers a version pin; absent when the archived notes predate the field. */
++  readonly pinCapable?: boolean
 +}
 +
 +/** Parsed `versions.json`, published beside the update feed by the release pipeline. */
@@ -452,6 +505,9 @@ index 00000000..b2a66af8
 +    const sessionFormatVersion = optionalCount(entry.sessionFormatVersion, `versions[${index}].sessionFormatVersion`)
 +    const storageSchemaVersion = optionalCount(entry.storageSchemaVersion, `versions[${index}].storageSchemaVersion`)
 +    const sessionQuerySchemaVersion = optionalCount(entry.sessionQuerySchemaVersion, `versions[${index}].sessionQuerySchemaVersion`)
++    if (entry.pinCapable !== undefined && typeof entry.pinCapable !== 'boolean') {
++      throw new Error(`desktop rollback: versions[${index}].pinCapable must be true or false`)
++    }
 +    return {
 +      version,
 +      upstreamRef: requiredString(entry.upstreamRef, `versions[${index}].upstreamRef`),
@@ -461,6 +517,7 @@ index 00000000..b2a66af8
 +      ...(sessionFormatVersion === undefined ? {} : { sessionFormatVersion }),
 +      ...(storageSchemaVersion === undefined ? {} : { storageSchemaVersion }),
 +      ...(sessionQuerySchemaVersion === undefined ? {} : { sessionQuerySchemaVersion }),
++      ...(entry.pinCapable === undefined ? {} : { pinCapable: entry.pinCapable }),
 +    }
 +  })
 +  const current = value.current
@@ -684,12 +741,79 @@ index b285bb98..fffb75f0 100644
 +  expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ updates: { automaticChecks: false } })
 +  expect(fs.statSync(path).mode & 0o777).toBe(0o600)
 +})
+diff --git a/apps/desktop/tests/update-coordinator.spec.ts b/apps/desktop/tests/update-coordinator.spec.ts
+index 1c6e9da1..29f9c652 100644
+--- a/apps/desktop/tests/update-coordinator.spec.ts
++++ b/apps/desktop/tests/update-coordinator.spec.ts
+@@ -60,16 +60,19 @@ function fixture(channel: 'nightly' | 'latest' = 'nightly', version = '1.1.0-alp
+     return ['verified-package']
+   })
+   const quitAndInstall = vi.fn()
++  const setFeedURL = vi.fn()
+   const beforeRestart = vi.fn(async () => true)
+   const downloadResult = vi.fn()
+   const states: DesktopUpdateState[] = []
+-  const updater = Object.assign(events, { checkForUpdates, downloadUpdate, quitAndInstall }) as unknown as AppUpdater
++  const updater = Object.assign(events, {
++    checkForUpdates, downloadUpdate, quitAndInstall, setFeedURL, allowDowngrade: false, allowPrerelease: false,
++  }) as unknown as AppUpdater
+   const coordinator = new DesktopUpdateCoordinator(
+     (state) => { states.push(state); return state },
+     beforeRestart, updater, () => true, () => version, downloadResult, channel,
+   )
+   coordinators.push(coordinator)
+-  return { coordinator, updater, events, states, checkForUpdates, downloadUpdate, quitAndInstall, beforeRestart, downloadResult }
++  return { coordinator, updater, events, states, checkForUpdates, downloadUpdate, quitAndInstall, setFeedURL, beforeRestart, downloadResult }
+ }
+ 
+ describe('desktop update coordinator', () => {
+@@ -257,3 +260,40 @@ it('keeps a stable-version nightly installation on nightly and rejects prereleas
+   expect((await latest.coordinator.check()).phase).toBe('error')
+   expect(latest.downloadUpdate).not.toHaveBeenCalled()
+ })
++
++describe('user-selected rollback feeds', () => {
++  it('offers an older release only after a rollback feed is selected', async () => {
++    const f = fixture('nightly', '1.1.0-alpha.1')
++    f.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: '1.0.0' } })
++    // The ordinary feed must keep moving forward, so an older release stays a non-candidate.
++    expect(await f.coordinator.check()).toMatchObject({ phase: 'idle' })
++    f.coordinator.useFeed('https://example.test/archive', true)
++    expect(f.setFeedURL).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://example.test/archive' }))
++    expect(f.updater.allowDowngrade).toBe(true)
++    expect(await f.coordinator.check()).toEqual({ phase: 'available', version: '1.0.0' })
++  })
++
++  it('downloads and installs that older release through the ordinary path', async () => {
++    const f = fixture('nightly', '1.1.0-alpha.1')
++    f.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: '1.0.0' } })
++    f.coordinator.useFeed('https://example.test/archive', true)
++    expect((await f.coordinator.check()).phase).toBe('available')
++    // The fixture reports its own version on completion; this download targets the older release.
++    f.downloadUpdate.mockImplementationOnce(async () => {
++      f.events.emit('update-downloaded', { version: '1.0.0' })
++      return ['verified-package']
++    })
++    expect(await f.coordinator.download('1.0.0')).toEqual({ phase: 'ready', version: '1.0.0' })
++    expect(await f.coordinator.install('1.0.0')).toMatchObject({ phase: 'installing', version: '1.0.0' })
++    expect(f.quitAndInstall).toHaveBeenCalledWith(true, true)
++  })
++
++  it('returns to forward-only updates when the packaged feed is restored', async () => {
++    const f = fixture('nightly', '1.1.0-alpha.1')
++    f.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: '1.0.0' } })
++    f.coordinator.useFeed('https://example.test/archive', true)
++    f.coordinator.useFeed('https://example.test/feed', false)
++    expect(f.updater.allowDowngrade).toBe(false)
++    expect(await f.coordinator.check()).toMatchObject({ phase: 'idle' })
++  })
++})
 diff --git a/apps/desktop/tests/update-rollback.spec.ts b/apps/desktop/tests/update-rollback.spec.ts
 new file mode 100644
-index 00000000..b497409b
+index 00000000..28ff694f
 --- /dev/null
 +++ b/apps/desktop/tests/update-rollback.spec.ts
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,181 @@
 +import { describe, expect, it } from 'vitest'
 +import {
 +  findCatalogVersion,
@@ -757,6 +881,15 @@ index 00000000..b497409b
 +    expect(parsed.versions[0]).not.toHaveProperty('storageSchemaVersion')
 +  })
 +
++  it('reads the optional version-pin capability and omits an absent one', () => {
++    const parsed = parseDesktopRollbackCatalog(catalog([
++      entry({ version: '0.2.1-alpha.3', pinCapable: false }),
++      entry({ version: '0.2.1-alpha.2' }),
++    ]))
++    expect(parsed.versions[0]?.pinCapable).toBe(false)
++    expect(parsed.versions[1]).not.toHaveProperty('pinCapable')
++  })
++
 +  it('omits an absent current version', () => {
 +    expect(parseDesktopRollbackCatalog({ schemaVersion: 1, versions: [] })).toEqual({ schemaVersion: 1, versions: [] })
 +  })
@@ -775,6 +908,7 @@ index 00000000..b497409b
 +    ['invalid version', catalog([entry({ version: 'not-a-version' })])],
 +    ['invalid current', { schemaVersion: 1, current: 'nope', versions: [] }],
 +    ['negative format', catalog([entry({ version: '0.2.1-alpha.3', sessionFormatVersion: -1 })])],
++    ['invalid pin capability', catalog([{ ...entry({ version: '0.2.1-alpha.3' }), pinCapable: 'yes' }])],
 +    ['fractional format', catalog([entry({ version: '0.2.1-alpha.3', storageSchemaVersion: 1.5 })])],
 +  ])('rejects %s', (_name, value) => {
 +    expect(() => parseDesktopRollbackCatalog(value)).toThrow(/desktop rollback/u)

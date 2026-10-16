@@ -280,7 +280,7 @@ jobs:
       # 「回滚到旧版本」要判断旧版本能不能读当前的数据，所以目录里的每一条都得带上会话/查询/存储
       # 三个格式版本。它们只在源码里定义，构建期直接从上游检出读，避免手抄漂移；读不到就直接失败 ——
       # 目录里绝不能出现格式版本缺失的条目。
-      - name: 提取格式版本
+      - name: 提取格式版本与版本能力
         id: schemas
         run: |
           read_const() {
@@ -292,12 +292,17 @@ jobs:
           session_format="$(read_const upstream/packages/core/session/src/types.ts SESSION_FORMAT_VERSION)"
           session_query="$(read_const upstream/packages/session-query/session-query-sqlite/src/schema.ts SESSION_QUERY_SQLITE_SCHEMA_VERSION)"
           storage_schema="$(read_const upstream/packages/storage/storage-sqlite/src/schema.ts STORAGE_SQLITE_SCHEMA_VERSION)"
+          # 「版本锁定」（补丁 0020 的 update-rollback.ts）是后来才有的：只有带它的构建才会记住锁定的
+          # feed。客户端据此对更早的版本给出「装回后仍会提示升级」的提醒，所以这里按文件存在探测。
+          update_controls=0
+          [[ -f upstream/apps/desktop/src/update-rollback.ts ]] && update_controls=1
           {
             echo "session_format=$session_format"
             echo "session_query=$session_query"
             echo "storage_schema=$storage_schema"
+            echo "update_controls=$update_controls"
           } >> "$GITHUB_OUTPUT"
-          echo "==> 格式版本：session=$session_format、session-query=$session_query、storage=$storage_schema"
+          echo "==> 格式版本：session=$session_format、session-query=$session_query、storage=$storage_schema；版本锁定能力=$update_controls"
 
       # 两处发布，职责分开：
       # - 归档 release（tag = 上游 ref，如 dsh-v0.2.1-alpha.3）：只追加、不删除，是**回退**用的历史版本；
@@ -314,6 +319,7 @@ jobs:
           SESSION_FORMAT: ${{ steps.schemas.outputs.session_format }}
           SESSION_QUERY_SCHEMA: ${{ steps.schemas.outputs.session_query }}
           STORAGE_SCHEMA: ${{ steps.schemas.outputs.storage_schema }}
+          UPDATE_CONTROLS: ${{ steps.schemas.outputs.update_controls }}
         run: |
           set -euo pipefail
           ref="${{ needs.prepare.outputs.ref }}"
@@ -335,12 +341,13 @@ jobs:
           # 正文带上补丁集指纹、构建序号与来源（HTML 注释，界面上看不见）；prepare 的幂等判断与
           # 序号递增读 build-fingerprint / build-number，source-commit 说明这份产物是哪次提交的
           # 补丁集构建出来的（回退时用得上）。其余注释是给 versions.json 目录读的：格式版本用于
-          # 判断旧版本能不能读当前数据，产物文件名/sha512/size 用于直接下载并校验。
+          # 判断旧版本能不能读当前数据，update-controls 说明这一版有没有「版本锁定」，产物文件名/
+          # sha512/size 用于直接下载并校验。
           notes="$RUNNER_TEMP/release-notes.md"
-          printf '%s\n\n<!-- build-version: %s -->\n<!-- build-fingerprint: %s -->\n<!-- build-number: %s -->\n<!-- upstream-ref: %s -->\n<!-- source-commit: %s -->\n<!-- session-format: %s -->\n<!-- session-query-schema: %s -->\n<!-- storage-schema: %s -->\n<!-- appimage: %s -->\n<!-- appimage-sha512: %s -->\n<!-- appimage-size: %s -->\n<!-- deb: %s -->\n<!-- deb-sha512: %s -->\n<!-- deb-size: %s -->\n' \
+          printf '%s\n\n<!-- build-version: %s -->\n<!-- build-fingerprint: %s -->\n<!-- build-number: %s -->\n<!-- upstream-ref: %s -->\n<!-- source-commit: %s -->\n<!-- session-format: %s -->\n<!-- session-query-schema: %s -->\n<!-- storage-schema: %s -->\n<!-- update-controls: %s -->\n<!-- appimage: %s -->\n<!-- appimage-sha512: %s -->\n<!-- appimage-size: %s -->\n<!-- deb: %s -->\n<!-- deb-sha512: %s -->\n<!-- deb-size: %s -->\n' \
             "DeepSeek Harness desktop for Linux，版本 $version（上游 $ref 的第 $build_number 次构建，unsigned）。AppImage 支持应用内自更新（feed 在 $RELEASE_TAG release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。本 release 是上游 $ref 的历史归档，只追加不删除，可直接下载回退。" \
             "$version" "$fingerprint" "$build_number" "$ref" "$GITHUB_SHA" \
-            "$SESSION_FORMAT" "$SESSION_QUERY_SCHEMA" "$STORAGE_SCHEMA" \
+            "$SESSION_FORMAT" "$SESSION_QUERY_SCHEMA" "$STORAGE_SCHEMA" "$UPDATE_CONTROLS" \
             "$appimage_name" "$appimage_sha512" "$appimage_size" \
             "$deb_name" "$deb_sha512" "$deb_size" > "$notes"
 

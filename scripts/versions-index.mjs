@@ -43,6 +43,7 @@ const NUMERIC_FIELDS = new Set([
   'session-format',
   'session-query-schema',
   'storage-schema',
+  'update-controls',
   'appimage-size',
   'deb-size',
 ])
@@ -148,6 +149,9 @@ function buildVersionEntry(release, repository) {
     storageSchemaVersion: Number(readField(fields, 'storage-schema')),
   }
   if (optional.appImage) entry.appImage = optional.appImage
+  // 可选能力位：有它（0/1）时说明这一版认不认「版本锁定」；没有这个字段的老归档则整项省略。
+  const updateControls = readField(fields, 'update-controls')
+  if (updateControls !== undefined) entry.pinCapable = updateControls === '1'
   if (optional.deb) entry.deb = optional.deb
   return { entry }
 }
