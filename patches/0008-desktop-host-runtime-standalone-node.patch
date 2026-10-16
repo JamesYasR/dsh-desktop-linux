@@ -339,3 +339,17 @@ index 86406625..d8bd1780 100644
          const { url } = await host.start()
          hostOrigin = new URL(url).origin
          let cookie = ''
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index d9a8f310..ccc83952 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -447,7 +447,8 @@ describe('desktop main startup', () => {
+     harness.app.isPackaged = packaged
+     await readyForUpdate()
+     const host = harness.hosts[0]!
+-    expect(host.node).toBe(process.execPath)
++    // The shell hands the Host the runtime that will run the payload, not a bare executable path.
++    expect(host.node).toMatchObject({ executable: process.execPath })
+     expect(host.primaryRuntime).toBe(packaged
+       ? join('desktop-test-resources', 'runtime', 'primary-runtime') : 'test-primary-runtime')
+     expect(host.packageManager).toMatchObject({

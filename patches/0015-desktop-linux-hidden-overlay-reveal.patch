@@ -15,3 +15,34 @@ index 7706982..d37782c 100644
      window.setMenu(null)
      window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
      return window
+diff --git a/apps/desktop/tests/update-overlay.spec.ts b/apps/desktop/tests/update-overlay.spec.ts
+index 56e49dfa..bdf3ec29 100644
+--- a/apps/desktop/tests/update-overlay.spec.ts
++++ b/apps/desktop/tests/update-overlay.spec.ts
+@@ -18,7 +18,7 @@ function visibilityFixture(visible = true) {
+   })
+   const window = Object.assign(new EventEmitter(), {
+     destroyed: false,
+-    webContents: { setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
++    webContents: { once: vi.fn(), setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
+     setMenu: vi.fn(), setBounds: vi.fn(), isDestroyed: () => window.destroyed,
+   })
+   native.create.mockReturnValue(window)
+@@ -101,7 +101,7 @@ it('keeps the macOS mandatory overlay stationary and blocks parent keyboard inpu
+     isDestroyed: () => false,
+   })
+   const window = Object.assign(new EventEmitter(), {
+-    webContents: { setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
++    webContents: { once: vi.fn(), setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
+     setMenu: vi.fn(), setBounds: vi.fn(), isDestroyed: () => false,
+   })
+   native.create.mockReturnValue(window)
+@@ -132,7 +132,7 @@ it('blocks each parent until its last owned overlay closes and invalidates each
+   const isolated = new DesktopUpdateOverlays()
+   native.create.mockImplementation(() => {
+     const window = Object.assign(new EventEmitter(), {
+-      webContents: { setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
++      webContents: { once: vi.fn(), setWindowOpenHandler: vi.fn() }, show: vi.fn(), focus: vi.fn(),
+       setMenu: vi.fn(), setBounds: vi.fn(), isDestroyed: () => false,
+     })
+     onTestFinished(() => { window.emit('closed') })

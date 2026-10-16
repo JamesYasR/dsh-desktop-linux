@@ -1,0 +1,908 @@
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index de4b9c3a..a0f54703 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -102,6 +102,24 @@ export const en = {
+   welcomeKeyFailed: 'Could not save the API key. Please try again.',
+   welcomeContinueFailed: 'Could not open the workspace. Please try again.',
+   checkUpdatesMenu: 'Check for Updates…',
++  automaticChecksMenu: 'Check for Updates Automatically',
++  rollbackMenu: 'Roll Back to an Earlier Version',
++  rollbackVersionItem: 'Version {version}',
++  rollbackUnsafeSuffix: ' (may not read current data)',
++  rollbackCatalogLoading: 'Loading available versions…',
++  rollbackCatalogFailed: 'Could not load the version list.',
++  rollbackUnavailable: 'No earlier version is available.',
++  rollbackConfirmTitle: 'Roll Back',
++  rollbackConfirmMessage: 'Install version {version} and restart?',
++  rollbackConfirmDetail: 'The update feed stays pinned to {version} until you unlock it from this menu.',
++  rollbackConfirmUnsafe: 'This version is older than a data-format change and may not open sessions or stored data written by the current version. Roll back only if you accept that.',
++  rollbackRiskCurrentUnknown: 'the catalog does not describe the running version',
++  rollbackRiskFormatUnknown: 'one of the two versions does not declare its data format',
++  rollbackRiskSessionFormat: 'sessions written now may not open afterwards',
++  rollbackRiskStorageSchema: 'stored data written now may not open afterwards',
++  rollbackConfirmDownload: 'Roll Back and Restart',
++  rollbackUnlockMenu: 'Unlock Version (pinned to {version})',
++  rollbackUnlocked: 'Version pin removed. The packaged update feed is active again.',
+   reloadPageMenu: 'Reload Page',
+   restartAppHostMenu: 'Restart App and Host',
+   updateCheckFailedTitle: 'Update Check Failed',
+@@ -277,6 +295,24 @@ export const zh = {
+   welcomeKeyFailed: '无法保存 API 密钥，请重试。',
+   welcomeContinueFailed: '无法打开工作区，请重试。',
+   checkUpdatesMenu: '检查更新…',
++  automaticChecksMenu: '自动检查更新',
++  rollbackMenu: '回滚到旧版本',
++  rollbackVersionItem: '版本 {version}',
++  rollbackUnsafeSuffix: '（可能读不了当前数据）',
++  rollbackCatalogLoading: '正在读取可用版本…',
++  rollbackCatalogFailed: '读取版本列表失败。',
++  rollbackUnavailable: '没有可回退的更早版本。',
++  rollbackConfirmTitle: '回滚版本',
++  rollbackConfirmMessage: '安装版本 {version} 并重启？',
++  rollbackConfirmDetail: '更新源会锁定到 {version}，直到你在本菜单里解除锁定。',
++  rollbackConfirmUnsafe: '这个版本早于一次数据格式变更，可能读不了当前版本写入的会话或存储数据。确认你能接受再回滚。',
++  rollbackRiskCurrentUnknown: '版本目录里没有当前版本的信息',
++  rollbackRiskFormatUnknown: '两个版本里有一个没有声明数据格式',
++  rollbackRiskSessionFormat: '现在写入的会话回滚后可能打不开',
++  rollbackRiskStorageSchema: '现在写入的存储数据回滚后可能打不开',
++  rollbackConfirmDownload: '回滚并重启',
++  rollbackUnlockMenu: '解除版本锁定（当前锁定 {version}）',
++  rollbackUnlocked: '已解除版本锁定，恢复使用产物自带的更新源。',
+   reloadPageMenu: '刷新页面',
+   restartAppHostMenu: '重启应用与 Host',
+   updateCheckFailedTitle: '更新检查失败',
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index dbe0f4f4..2f2cb0ae 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -4,6 +4,7 @@ import { LINUX_CHROME_ARGUMENT, resolveLinuxWindowChrome } from './linux-window.
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+ 
+ import { readFile, writeFile } from 'node:fs/promises'
++import { readFileSync } from 'node:fs'
+ import { join } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ import {
+@@ -53,7 +54,18 @@ import { DesktopMandatoryUpdatePolicy, resolveDesktopPolicyConfig, type DesktopP
+ import { desktopClientMetadata, desktopClientVersion } from './client-metadata.ts'
+ import { DesktopMandatoryUpdateWindow } from './mandatory-update-window.ts'
+ import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
+-import { readDesktopSettings } from './settings.ts'
++import { readDesktopSettings, writeDesktopUpdateSettings } from './settings.ts'
++import {
++  findCatalogVersion,
++  parseDesktopRollbackCatalog,
++  resolveRollbackCandidates,
++  resolveRollbackOrigin,
++  rollbackCompatibility,
++  versionCatalogUrl,
++  type DesktopRollbackCatalog,
++  type DesktopRollbackRisk,
++  type DesktopRollbackVersion,
++} from './update-rollback.ts'
+ import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
+ import { readDesktopRuntime } from './runtime-tree.ts'
+ import { desktopNodeRuntime } from './node-environment.ts'
+@@ -339,6 +351,9 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+ 
+ async function main(): Promise<void> {
+   const desktopSettings = readDesktopSettings(app.getPath('userData'))
++  // The menu owns these two preferences, so the process keeps its own copy instead of the startup snapshot.
++  let automaticChecks = desktopSettings.updates.automaticChecks
++  let pinnedFeedUrl = desktopSettings.updates.pinnedFeedUrl
+   void pruneCrashReports(app.getPath('logs'))
+   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
+   const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
+@@ -667,6 +682,14 @@ async function main(): Promise<void> {
+   )
+ 
+   const updateSchedule = new DesktopUpdateSchedule(updates, resolveDesktopUpdateScheduleConfig(process.env))
++  // The packaged feed is both the default source and the feed an unlocked pin returns to.
++  const packagedUpdateConfig = ((): string | undefined => {
++    try { return readFileSync(join(process.resourcesPath, 'app-update.yml'), 'utf8') } catch { return undefined }
++  })()
++  const packagedFeedUrl = resolveRollbackOrigin({}, packagedUpdateConfig)
++  // A rollback pins the feed across restarts, so it is applied before the first check can run.
++  if (pinnedFeedUrl !== undefined) updates.useFeed(pinnedFeedUrl, true)
++  updateSchedule.setAutomatic(automaticChecks)
+ 
+   const downloadUpdate = async (version: string): Promise<DesktopUpdateState> => {
+     void track('desktop_upgrade_click', {})
+@@ -944,7 +967,8 @@ async function main(): Promise<void> {
+ 
+   const automaticCheck = (): void => {
+     if (!quitting) void mandatoryPolicy?.check('foreground-or-resume').catch((error: unknown) => { console.error(error) })
+-    if (!quitting) void updateSchedule.check().catch((error: unknown) => { console.error(error) })
++    // Mandatory policy stays independent: the user preference only governs ordinary feed polling.
++    if (!quitting && automaticChecks) void updateSchedule.check().catch((error: unknown) => { console.error(error) })
+   }
+   powerMonitor.on('resume', automaticCheck)
+   app.on('will-quit', () => {
+@@ -984,6 +1008,9 @@ async function main(): Promise<void> {
+       : { label: currentDesktopLocale().messages.aboutMenu, role: 'about' },
+     { type: 'separator' },
+     { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void openUpdatePrompt(true) } },
++    { label: currentDesktopLocale().messages.automaticChecksMenu, type: 'checkbox', checked: automaticChecks,
++      click: item => { setAutomaticChecks(item.checked) } },
++    ...rollbackMenuItems(),
+     ...process.platform === 'darwin' || process.platform === 'win32'
+       ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
+     ...development ? [
+@@ -1004,6 +1031,95 @@ async function main(): Promise<void> {
+     { role: 'toggleDevTools', visible: false },
+     { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
+   ]
++  // Published beside the feed; the submenu renders from this snapshot until the process restarts.
++  let rollbackCatalog: DesktopRollbackCatalog | undefined
++  let rollbackCatalogFailed = false
++  // Only an AppImage installation can replace its own executable, which is what a rollback installs.
++  const rollbackSupported = (): boolean => (process.env.APPIMAGE ?? '') !== ''
++  const rollbackRiskText = (risk: DesktopRollbackRisk): string => {
++    const messages = currentDesktopLocale().messages
++    const keys: Record<DesktopRollbackRisk, string> = {
++      'current-unknown': messages.rollbackRiskCurrentUnknown,
++      'format-unknown': messages.rollbackRiskFormatUnknown,
++      'session-format': messages.rollbackRiskSessionFormat,
++      'storage-schema': messages.rollbackRiskStorageSchema,
++    }
++    return keys[risk]
++  }
++  const persistUpdatePreferences = (patch: { automaticChecks?: boolean, pinnedFeedUrl?: string | undefined }): void => {
++    try { writeDesktopUpdateSettings(app.getPath('userData'), patch) } catch (error) {
++      console.warn('desktop update: could not persist update preferences', error)
++    }
++  }
++  const setAutomaticChecks = (enabled: boolean): void => {
++    automaticChecks = enabled
++    persistUpdatePreferences({ automaticChecks: enabled })
++    updateSchedule.setAutomatic(enabled)
++    refreshApplicationMenu()
++  }
++  const unlockVersion = (): void => {
++    pinnedFeedUrl = undefined
++    persistUpdatePreferences({ pinnedFeedUrl: undefined })
++    if (packagedFeedUrl !== undefined) updates.useFeed(packagedFeedUrl, false)
++    refreshApplicationMenu()
++    const messages = currentDesktopLocale().messages
++    void ordinaryMessageBox({ type: 'info', title: messages.rollbackConfirmTitle, message: messages.rollbackUnlocked })
++      .catch((error: unknown) => { console.error(error) })
++  }
++  const runRollback = async (candidate: DesktopRollbackVersion): Promise<void> => {
++    const messages = currentDesktopLocale().messages
++    const compatibility = rollbackCompatibility(candidate,
++      rollbackCatalog === undefined ? undefined : findCatalogVersion(rollbackCatalog, app.getVersion()))
++    const detail = [formatDesktopMessage(messages.rollbackConfirmDetail, { version: candidate.version })]
++    if (!compatibility.safe) {
++      detail.push(messages.rollbackConfirmUnsafe, ...compatibility.risks.map(risk => `• ${rollbackRiskText(risk)}`))
++    }
++    const answer = await ordinaryMessageBox({
++      type: compatibility.safe ? 'question' : 'warning',
++      title: messages.rollbackConfirmTitle,
++      message: formatDesktopMessage(messages.rollbackConfirmMessage, { version: candidate.version }),
++      detail: detail.join('\n\n'),
++      buttons: [messages.rollbackConfirmDownload, messages.cancel],
++      // An unsafe target is never the default button: accepting a data-format risk stays deliberate.
++      defaultId: compatibility.safe ? 0 : 1,
++      cancelId: 1,
++    })
++    if (answer.response !== 0) return
++    // Staying on the older release is the point, so polling stops until the user asks for it again.
++    setAutomaticChecks(false)
++    pinnedFeedUrl = candidate.feedUrl
++    persistUpdatePreferences({ pinnedFeedUrl: candidate.feedUrl })
++    updates.useFeed(candidate.feedUrl, true)
++    refreshApplicationMenu()
++    // Reuse the ordinary flow end to end: check, confirm the download, download, then restart to install.
++    await openUpdatePrompt(true)
++  }
++  const rollbackItems = (): MenuItemConstructorOptions[] => {
++    const messages = currentDesktopLocale().messages
++    if (rollbackCatalog === undefined) {
++      return [{ label: rollbackCatalogFailed ? messages.rollbackCatalogFailed : messages.rollbackCatalogLoading, enabled: false }]
++    }
++    const current = findCatalogVersion(rollbackCatalog, app.getVersion())
++    const candidates = resolveRollbackCandidates(rollbackCatalog, app.getVersion())
++    if (candidates.length === 0) return [{ label: messages.rollbackUnavailable, enabled: false }]
++    return candidates.map(candidate => ({
++      label: formatDesktopMessage(messages.rollbackVersionItem, { version: candidate.version })
++        + (rollbackCompatibility(candidate, current).safe ? '' : messages.rollbackUnsafeSuffix),
++      click: () => { void runRollback(candidate).catch((error: unknown) => { console.error(error) }) },
++    }))
++  }
++  const rollbackMenuItems = (): MenuItemConstructorOptions[] => {
++    if (!rollbackSupported()) return []
++    const messages = currentDesktopLocale().messages
++    const items: MenuItemConstructorOptions[] = [{ label: messages.rollbackMenu, submenu: rollbackItems() }]
++    if (pinnedFeedUrl !== undefined) {
++      items.push({
++        label: formatDesktopMessage(messages.rollbackUnlockMenu, { version: pinnedFeedUrl.split('/').pop() ?? pinnedFeedUrl }),
++        click: () => { unlockVersion() },
++      })
++    }
++    return items
++  }
+   const refreshApplicationMenu = (): void => {
+     // Caption platforms show Application and Edit in the page's caption, so the native menu bar goes away.
+     Menu.setApplicationMenu(Menu.buildFromTemplate(captionChrome ? devToolsItems : [{
+@@ -1013,6 +1129,21 @@ async function main(): Promise<void> {
+     tray?.relabel()
+   }
+   refreshApplicationMenu()
++  // The catalog is a small static file beside the feed; load it once so the rollback submenu can render.
++  const loadRollbackCatalog = async (): Promise<void> => {
++    const origin = resolveRollbackOrigin(process.env, packagedUpdateConfig)
++    if (origin === undefined) return
++    try {
++      const response = await net.fetch(versionCatalogUrl(origin))
++      if (!response.ok) throw new Error(`desktop rollback: version catalog returned ${response.status}`)
++      rollbackCatalog = parseDesktopRollbackCatalog(await response.json())
++    } catch (error) {
++      rollbackCatalogFailed = true
++      console.warn('desktop update: could not load the version catalog', error)
++    }
++    refreshApplicationMenu()
++  }
++  void loadRollbackCatalog()
+   // Windows picks a bitmap out of the multi-size ICO by display scale; Linux's StatusNotifierItem host
+   // scales the single PNG to the panel's icon size instead.
+   const trayIconPath = development
+diff --git a/apps/desktop/src/settings.ts b/apps/desktop/src/settings.ts
+index a4bb67b3..0a42686a 100644
+--- a/apps/desktop/src/settings.ts
++++ b/apps/desktop/src/settings.ts
+@@ -2,13 +2,17 @@
+  * Local Electron shell settings, loaded once per process independently of the Host.
+  * Ownership: .agents/notes/implemented/architecture/2026-10-08-desktop-shell-configuration.md.
+  */
+-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
++import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+ import { join } from 'node:path'
+ 
+ /** Resolved shell preferences; absent fields use the defaults without rewriting existing files. */
+ export interface DesktopSettings {
+   readonly updates: {
+     readonly allowTestAuthPopupWindow: boolean
++    /** Whether the shell polls the feed on its own; the Application menu toggles this. */
++    readonly automaticChecks: boolean
++    /** Feed base URL an earlier rollback pinned this installation to, when one was chosen. */
++    readonly pinnedFeedUrl?: string
+   }
+ }
+ 
+@@ -24,7 +28,7 @@ function record(value: unknown): value is Record<string, unknown> {
+ export function readDesktopSettings(userData: string): DesktopSettings {
+   const directory = join(userData, 'desktop')
+   const path = join(directory, 'settings.json')
+-  const defaults: DesktopSettings = { updates: { allowTestAuthPopupWindow: false } }
++  const defaults: DesktopSettings = { updates: { allowTestAuthPopupWindow: false, automaticChecks: true } }
+   try {
+     let raw: string
+     try { raw = readFileSync(path, 'utf8') } catch (error) {
+@@ -44,7 +48,19 @@ export function readDesktopSettings(userData: string): DesktopSettings {
+     if (allow !== undefined && typeof allow !== 'boolean') {
+       throw new Error('updates.allowTestAuthPopupWindow must be true or false')
+     }
+-    return { updates: { allowTestAuthPopupWindow: allow ?? false } }
++    const automatic = value.updates?.automaticChecks
++    if (automatic !== undefined && typeof automatic !== 'boolean') {
++      throw new Error('updates.automaticChecks must be true or false')
++    }
++    const pinned = value.updates?.pinnedFeedUrl
++    if (pinned !== undefined && (typeof pinned !== 'string' || pinned.trim() === '')) {
++      throw new Error('updates.pinnedFeedUrl must be a non-empty string')
++    }
++    return { updates: {
++      allowTestAuthPopupWindow: allow ?? false,
++      automaticChecks: automatic ?? true,
++      ...(pinned === undefined ? {} : { pinnedFeedUrl: pinned }),
++    } }
+   } catch (error) {
+     try {
+       console.warn(`desktop settings: ${path}: using defaults because settings could not be loaded`, error)
+@@ -55,3 +71,39 @@ export function readDesktopSettings(userData: string): DesktopSettings {
+     return defaults
+   }
+ }
++
++/**
++ * Persist update preferences without disturbing preferences the document owns elsewhere.
++ *
++ * The file is replaced atomically so a crash cannot leave half-written settings, and an unreadable or
++ * invalid document is left untouched instead of being overwritten with defaults.
++ * @param userData - Electron's userData directory, independent of DSH_HOME.
++ * @param patch - Update preferences to merge; `undefined` removes a key, which unpins a feed.
++ * @returns Settings read back from disk after the write.
++ * @throws {Error} When the existing document cannot be read or parsed, or the write fails.
++ */
++export function writeDesktopUpdateSettings(
++  userData: string,
++  patch: Partial<{ allowTestAuthPopupWindow: boolean, automaticChecks: boolean, pinnedFeedUrl: string | undefined }>,
++): DesktopSettings {
++  const directory = join(userData, 'desktop')
++  const path = join(directory, 'settings.json')
++  let document: Record<string, unknown> = {}
++  try {
++    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
++    if (!record(parsed)) throw new Error('expected a JSON object')
++    document = { ...parsed }
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
++      throw new Error(`desktop settings: refusing to overwrite unreadable ${path}`, { cause: error })
++    }
++  }
++  const updates = record(document.updates) ? { ...document.updates } : {}
++  Object.assign(updates, patch)
++  document.updates = updates
++  mkdirSync(directory, { recursive: true, mode: 0o700 })
++  const temporary = `${path}.tmp`
++  writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 })
++  renameSync(temporary, path)
++  return readDesktopSettings(userData)
++}
+diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
+index 2198bed4..9d104b04 100644
+--- a/apps/desktop/src/update-coordinator.ts
++++ b/apps/desktop/src/update-coordinator.ts
+@@ -116,6 +116,23 @@ export class DesktopUpdateCoordinator {
+     return result
+   }
+ 
++  /**
++   * Point the updater at a feed other than the packaged one.
++   *
++   * electron-updater refuses older versions unless downgrades are allowed, so a user-selected rollback
++   * enables that permission here and a returned pin clears it again; the ordinary update path keeps the
++   * packaged feed and its construction-time settings.
++   * @param feedUrl - Generic provider base URL used by subsequent checks.
++   * @param allowDowngrade - Whether an older release served by that feed may be offered.
++   */
++  useFeed(feedUrl: string, allowDowngrade: boolean): void {
++    this.assertLive()
++    this.updater.setFeedURL({ provider: 'generic', url: feedUrl, channel: this.channel })
++    // Assigning a channel re-enables downgrade inside electron-updater, so re-assert both switches after it.
++    this.updater.allowPrerelease = this.channel === 'nightly'
++    this.updater.allowDowngrade = allowDowngrade
++  }
++
+   /**
+    * @param version - Version shown in the user's download confirmation.
+    * @returns Download readiness or failure, without authorizing installation.
+diff --git a/apps/desktop/src/update-rollback.ts b/apps/desktop/src/update-rollback.ts
+new file mode 100644
+index 00000000..b2a66af8
+--- /dev/null
++++ b/apps/desktop/src/update-rollback.ts
+@@ -0,0 +1,172 @@
++/** Read the archived-version catalog that backs a user-selected rollback to an earlier release. */
++
++import { lt, valid } from 'semver'
++
++/** Environment variable that points a packaged Linux application at another update feed. */
++const LINUX_UPDATE_FEED_ENV = 'DSH_DESKTOP_LINUX_UPDATE_ORIGIN'
++
++/** One archived release the shell can install in place of the running version. */
++export interface DesktopRollbackVersion {
++  readonly version: string
++  readonly upstreamRef: string
++  /** Generic provider base URL of that release, used as the updater feed for the downgrade. */
++  readonly feedUrl: string
++  readonly releaseUrl: string
++  readonly publishedAt: string
++  /** Data-format versions the release declared; absent when the catalog predates these fields. */
++  readonly sessionFormatVersion?: number
++  readonly storageSchemaVersion?: number
++  readonly sessionQuerySchemaVersion?: number
++}
++
++/** Parsed `versions.json`, published beside the update feed by the release pipeline. */
++export interface DesktopRollbackCatalog {
++  readonly schemaVersion: 1
++  /** Newest archived version, which the feed currently serves. */
++  readonly current?: string
++  readonly versions: readonly DesktopRollbackVersion[]
++}
++
++/** Why a rollback target cannot be promised to read data written by the running version. */
++export type DesktopRollbackRisk = 'current-unknown' | 'format-unknown' | 'session-format' | 'storage-schema'
++
++/** Compatibility verdict for one rollback target; `safe` is false whenever a risk is reported. */
++export interface DesktopRollbackCompatibility {
++  readonly safe: boolean
++  readonly risks: readonly DesktopRollbackRisk[]
++}
++
++function record(value: unknown): value is Record<string, unknown> {
++  return typeof value === 'object' && value !== null && !Array.isArray(value)
++}
++
++function requiredString(value: unknown, field: string): string {
++  if (typeof value !== 'string' || value.trim() === '') {
++    throw new Error(`desktop rollback: ${field} must be a non-empty string`)
++  }
++  return value
++}
++
++function optionalCount(value: unknown, field: string): number | undefined {
++  if (value === undefined) return undefined
++  if (!Number.isInteger(value) || (value as number) < 0) {
++    throw new Error(`desktop rollback: ${field} must be a non-negative integer`)
++  }
++  return value as number
++}
++
++function stripTrailingSlashes(value: string): string {
++  return value.replace(/\/+$/u, '')
++}
++
++/**
++ * Validate the published catalog before any entry reaches the updater.
++ * @param value - Parsed `versions.json`.
++ * @returns Catalog with every entry validated; unknown schema versions reject instead of being guessed.
++ * @throws {Error} When the document or any listed version is unusable.
++ */
++export function parseDesktopRollbackCatalog(value: unknown): DesktopRollbackCatalog {
++  if (!record(value) || value.schemaVersion !== 1 || !Array.isArray(value.versions)) {
++    throw new Error('desktop rollback: unsupported version catalog')
++  }
++  const versions = value.versions.map((entry, index): DesktopRollbackVersion => {
++    if (!record(entry)) throw new Error(`desktop rollback: versions[${index}] must be an object`)
++    const version = requiredString(entry.version, `versions[${index}].version`)
++    if (valid(version) === null) throw new Error(`desktop rollback: versions[${index}].version is not a semantic version`)
++    const sessionFormatVersion = optionalCount(entry.sessionFormatVersion, `versions[${index}].sessionFormatVersion`)
++    const storageSchemaVersion = optionalCount(entry.storageSchemaVersion, `versions[${index}].storageSchemaVersion`)
++    const sessionQuerySchemaVersion = optionalCount(entry.sessionQuerySchemaVersion, `versions[${index}].sessionQuerySchemaVersion`)
++    return {
++      version,
++      upstreamRef: requiredString(entry.upstreamRef, `versions[${index}].upstreamRef`),
++      feedUrl: stripTrailingSlashes(requiredString(entry.feedUrl, `versions[${index}].feedUrl`)),
++      releaseUrl: requiredString(entry.releaseUrl, `versions[${index}].releaseUrl`),
++      publishedAt: requiredString(entry.publishedAt, `versions[${index}].publishedAt`),
++      ...(sessionFormatVersion === undefined ? {} : { sessionFormatVersion }),
++      ...(storageSchemaVersion === undefined ? {} : { storageSchemaVersion }),
++      ...(sessionQuerySchemaVersion === undefined ? {} : { sessionQuerySchemaVersion }),
++    }
++  })
++  const current = value.current
++  // The pipeline writes null for a catalog with no archived versions yet.
++  if (current !== undefined && current !== null && (typeof current !== 'string' || valid(current) === null)) {
++    throw new Error('desktop rollback: current must be a semantic version')
++  }
++  return { schemaVersion: 1, ...(typeof current !== 'string' ? {} : { current }), versions }
++}
++
++/**
++ * List the archived versions a user may roll back to.
++ * @param catalog - Parsed version catalog.
++ * @param currentVersion - Version reported by the running application.
++ * @param limit - Maximum entries to offer, newest first.
++ * @returns Versions strictly older than the running one.
++ */
++export function resolveRollbackCandidates(
++  catalog: DesktopRollbackCatalog,
++  currentVersion: string,
++  limit = 6,
++): readonly DesktopRollbackVersion[] {
++  if (valid(currentVersion) === null || limit < 1) return []
++  return catalog.versions
++    .filter(entry => valid(entry.version) !== null && lt(entry.version, currentVersion))
++    .sort((left, right) => lt(left.version, right.version) ? 1 : -1)
++    .slice(0, limit)
++}
++
++/**
++ * Find the catalog entry that describes the running version.
++ * @param catalog - Parsed version catalog.
++ * @param version - Version reported by the running application.
++ * @returns Matching entry, or undefined when the running build was never archived.
++ */
++export function findCatalogVersion(catalog: DesktopRollbackCatalog, version: string): DesktopRollbackVersion | undefined {
++  return catalog.versions.find(entry => entry.version === version)
++}
++
++/**
++ * Compare a rollback target's data formats with the running version's.
++ * Older releases may predate a format generation, in which case data written by the newer shell may not
++ * open after the downgrade; missing fields cannot be promised either way.
++ * @param candidate - Version the user selected.
++ * @param current - Catalog entry of the running version, when the catalog lists it.
++ * @returns Verdict plus the concrete risks behind it.
++ */
++export function rollbackCompatibility(
++  candidate: DesktopRollbackVersion,
++  current: DesktopRollbackVersion | undefined,
++): DesktopRollbackCompatibility {
++  if (current === undefined) return { safe: false, risks: ['current-unknown'] }
++  const risks = new Set<DesktopRollbackRisk>()
++  for (const field of ['sessionFormatVersion', 'storageSchemaVersion'] as const) {
++    const target = candidate[field]
++    const running = current[field]
++    if (target === undefined || running === undefined) risks.add('format-unknown')
++    else if (target < running) risks.add(field === 'sessionFormatVersion' ? 'session-format' : 'storage-schema')
++  }
++  return { safe: risks.size === 0, risks: [...risks] }
++}
++
++/**
++ * Resolve the base URL that serves both the update feed and its version catalog.
++ * @param environment - Desktop process environment; a non-empty override wins over the packaged feed.
++ * @param appUpdateYml - Contents of the packaged `app-update.yml`, when the file exists.
++ * @returns Base URL without a trailing slash, or undefined when neither source names one.
++ */
++export function resolveRollbackOrigin(environment: NodeJS.ProcessEnv, appUpdateYml: string | undefined): string | undefined {
++  const override = environment[LINUX_UPDATE_FEED_ENV]?.trim()
++  if (override !== undefined && override !== '') return stripTrailingSlashes(override)
++  if (appUpdateYml === undefined) return undefined
++  const match = /^url:[ \t]*(.+?)[ \t]*$/mu.exec(appUpdateYml)
++  const value = match?.[1]?.trim().replace(/^['"]|['"]$/gu, '')
++  return value === undefined || value === '' ? undefined : stripTrailingSlashes(value)
++}
++
++/**
++ * Build the catalog URL that sits beside a feed base URL.
++ * @param origin - Base URL that serves the feed.
++ * @returns Absolute `versions.json` URL.
++ */
++export function versionCatalogUrl(origin: string): string {
++  return `${stripTrailingSlashes(origin)}/versions.json`
++}
+diff --git a/apps/desktop/src/update-schedule.ts b/apps/desktop/src/update-schedule.ts
+index 7c08e569..bc8cafbc 100644
+--- a/apps/desktop/src/update-schedule.ts
++++ b/apps/desktop/src/update-schedule.ts
+@@ -34,6 +34,7 @@ export class DesktopUpdateSchedule {
+   private disposed = false
+   private nextCheck = -Infinity
+   private delay: number
++  private automatic = true
+ 
+   /**
+    * @param updates - Coordinator that joins network checks and retains prepared packages.
+@@ -76,6 +77,26 @@ export class DesktopUpdateSchedule {
+     return this.pending
+   }
+ 
++  /**
++   * Enable or disable the checks this schedule starts on its own.
++   *
++   * Manual checks and mandatory-policy checks keep working: only the timer this class owns is affected,
++   * and switching back on checks once immediately so the user sees a result without waiting an interval.
++   * @param enabled - Whether ordinary polling may run by itself.
++   */
++  setAutomatic(enabled: boolean): void {
++    if (this.automatic === enabled || this.disposed) return
++    this.automatic = enabled
++    if (!enabled) {
++      clearTimeout(this.timer)
++      this.timer = undefined
++      return
++    }
++    this.delay = this.config.intervalMs
++    this.nextCheck = -Infinity
++    if (this.pending === undefined) void this.check(false, true).catch((error: unknown) => { console.error(error) })
++  }
++
+   /** Stop timers and prevent late completion from rearming; the coordinator owns pending network teardown. */
+   dispose(): void {
+     this.disposed = true
+@@ -91,7 +112,8 @@ export class DesktopUpdateSchedule {
+   }
+ 
+   private schedule(failed: boolean): void {
+-    if (this.disposed) return
++    // The Application menu can switch ordinary polling off; explicit checks never come through here.
++    if (this.disposed || !this.automatic) return
+     const { intervalMs, maxBackoffMs, jitter } = this.config
+     this.delay = failed ? Math.min(maxBackoffMs, this.delay * 2) : intervalMs
+     const lower = Math.max(1_000, this.delay * (1 - jitter))
+diff --git a/apps/desktop/tests/settings.spec.ts b/apps/desktop/tests/settings.spec.ts
+index b285bb98..fffb75f0 100644
+--- a/apps/desktop/tests/settings.spec.ts
++++ b/apps/desktop/tests/settings.spec.ts
+@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+ import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest'
+-import { readDesktopSettings } from '../src/settings.ts'
++import { readDesktopSettings, writeDesktopUpdateSettings } from '../src/settings.ts'
+ 
+ vi.mock('node:fs', async importOriginal => ({ ...await importOriginal<typeof import('node:fs')>() }))
+ 
+@@ -22,8 +22,8 @@ it('creates a discoverable default file on first launch without touching other p
+   const { userData, path } = fixture()
+   rmSync(join(userData, 'desktop'), { recursive: true })
+   writeFileSync(join(userData, 'keybindings.json'), 'existing shortcuts\n')
+-  expect(readDesktopSettings(userData)).toEqual({ updates: { allowTestAuthPopupWindow: false } })
+-  expect(readFileSync(path, 'utf8')).toBe('{\n  "updates": {\n    "allowTestAuthPopupWindow": false\n  }\n}\n')
++  expect(readDesktopSettings(userData)).toEqual({ updates: { allowTestAuthPopupWindow: false, automaticChecks: true } })
++  expect(readFileSync(path, 'utf8')).toBe('{\n  "updates": {\n    "allowTestAuthPopupWindow": false,\n    "automaticChecks": true\n  }\n}\n')
+   expect(readFileSync(join(userData, 'keybindings.json'), 'utf8')).toBe('existing shortcuts\n')
+ })
+ 
+@@ -81,3 +81,64 @@ it('continues with defaults even when warning output fails', () => {
+   expect(readDesktopSettings(userData).updates.allowTestAuthPopupWindow).toBe(false)
+   expect(readFileSync(path, 'utf8')).toBe('{')
+ })
++
++it('reads an automatic-check opt-out and a feed pin without rewriting the document', () => {
++  const { userData, path } = fixture()
++  const raw = '{"updates":{"automaticChecks":false,"pinnedFeedUrl":"https://example.test/feed"}}'
++  writeFileSync(path, raw)
++  const settings = readDesktopSettings(userData)
++  expect(settings.updates.automaticChecks).toBe(false)
++  expect(settings.updates.pinnedFeedUrl).toBe('https://example.test/feed')
++  expect(readFileSync(path, 'utf8')).toBe(raw)
++})
++
++it.each(['{"updates":{"automaticChecks":"false"}}', '{"updates":{"automaticChecks":1}}',
++  '{"updates":{"pinnedFeedUrl":""}}', '{"updates":{"pinnedFeedUrl":42}}'])(
++'reports an invalid update preference and keeps the file: %s', (raw) => {
++  const { userData, path } = fixture()
++  writeFileSync(path, raw)
++  const settings = readDesktopSettings(userData)
++  expect(settings.updates.automaticChecks).toBe(true)
++  expect(settings.updates.pinnedFeedUrl).toBeUndefined()
++  expect(console.warn).toHaveBeenCalledWith(expect.stringContaining(path), expect.any(Error))
++  expect(readFileSync(path, 'utf8')).toBe(raw)
++})
++
++it('writes one preference while preserving unrelated keys and other preferences', () => {
++  const { userData, path } = fixture()
++  writeFileSync(path, JSON.stringify({ updates: { allowTestAuthPopupWindow: true }, custom: 'preserve' }))
++  const settings = writeDesktopUpdateSettings(userData, { automaticChecks: false, pinnedFeedUrl: 'https://example.test/feed' })
++  expect(settings.updates).toEqual({
++    allowTestAuthPopupWindow: true, automaticChecks: false, pinnedFeedUrl: 'https://example.test/feed',
++  })
++  expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
++    updates: { allowTestAuthPopupWindow: true, automaticChecks: false, pinnedFeedUrl: 'https://example.test/feed' },
++    custom: 'preserve',
++  })
++  expect(fs.statSync(path).mode & 0o777).toBe(0o600)
++})
++
++it('removes a feed pin when the patch sets it to undefined', () => {
++  const { userData, path } = fixture()
++  writeFileSync(path, '{"updates":{"automaticChecks":true,"pinnedFeedUrl":"https://example.test/feed"}}')
++  const settings = writeDesktopUpdateSettings(userData, { pinnedFeedUrl: undefined })
++  expect(settings.updates.pinnedFeedUrl).toBeUndefined()
++  expect(JSON.parse(readFileSync(path, 'utf8')).updates).toEqual({ automaticChecks: true })
++})
++
++it('refuses to overwrite a document it cannot parse', () => {
++  const { userData, path } = fixture()
++  writeFileSync(path, '{')
++  expect(() => writeDesktopUpdateSettings(userData, { automaticChecks: false })).toThrow(/refusing to overwrite/u)
++  expect(readFileSync(path, 'utf8')).toBe('{')
++})
++
++it('creates the update preference document when none exists', () => {
++  const { userData, path } = fixture()
++  rmSync(join(userData, 'desktop'), { recursive: true })
++  const settings = writeDesktopUpdateSettings(userData, { automaticChecks: false })
++  expect(settings.updates).toEqual({ allowTestAuthPopupWindow: false, automaticChecks: false })
++  // Only the written preference is persisted; the absent one keeps its read-time default.
++  expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ updates: { automaticChecks: false } })
++  expect(fs.statSync(path).mode & 0o777).toBe(0o600)
++})
+diff --git a/apps/desktop/tests/update-rollback.spec.ts b/apps/desktop/tests/update-rollback.spec.ts
+new file mode 100644
+index 00000000..b497409b
+--- /dev/null
++++ b/apps/desktop/tests/update-rollback.spec.ts
+@@ -0,0 +1,171 @@
++import { describe, expect, it } from 'vitest'
++import {
++  findCatalogVersion,
++  parseDesktopRollbackCatalog,
++  resolveRollbackCandidates,
++  resolveRollbackOrigin,
++  rollbackCompatibility,
++  versionCatalogUrl,
++  type DesktopRollbackVersion,
++} from '../src/update-rollback.ts'
++
++const FEED = 'https://github.com/example/dsh/releases/download/dsh-v0.2.1-alpha.4'
++
++function entry(overrides: Partial<DesktopRollbackVersion> & { version: string }): Record<string, unknown> {
++  return {
++    upstreamRef: `dsh-v${overrides.version}`,
++    feedUrl: `${FEED}/`,
++    releaseUrl: 'https://github.com/example/dsh/releases/tag/dsh-v0.2.1-alpha.4',
++    publishedAt: '2026-10-16T04:00:00Z',
++    sessionFormatVersion: 4,
++    storageSchemaVersion: 1,
++    sessionQuerySchemaVersion: 8,
++    ...overrides,
++  }
++}
++
++function catalog(versions: unknown[], current: unknown = '0.2.1-alpha.4'): Record<string, unknown> {
++  return { schemaVersion: 1, current, versions }
++}
++
++/** Parse one catalog and return its first entry, failing the fixture when validation dropped it. */
++function first(value: unknown): DesktopRollbackVersion {
++  const parsed = parseDesktopRollbackCatalog(value)
++  const only = parsed.versions[0]
++  if (only === undefined) throw new Error('fixture produced no catalog entry')
++  return only
++}
++
++function version(overrides: Partial<DesktopRollbackVersion> & { version: string }): DesktopRollbackVersion {
++  return first(catalog([entry(overrides)]))
++}
++
++describe('version catalog validation', () => {
++  it('accepts a catalog and normalizes the feed base URL', () => {
++    const parsed = parseDesktopRollbackCatalog(catalog([entry({ version: '0.2.1-alpha.3' })]))
++    expect(parsed.schemaVersion).toBe(1)
++    expect(parsed.current).toBe('0.2.1-alpha.4')
++    expect(parsed.versions[0]).toEqual({
++      version: '0.2.1-alpha.3',
++      upstreamRef: 'dsh-v0.2.1-alpha.3',
++      feedUrl: FEED,
++      releaseUrl: 'https://github.com/example/dsh/releases/tag/dsh-v0.2.1-alpha.4',
++      publishedAt: '2026-10-16T04:00:00Z',
++      sessionFormatVersion: 4,
++      storageSchemaVersion: 1,
++      sessionQuerySchemaVersion: 8,
++    })
++  })
++
++  it('keeps absent format fields absent instead of guessing them', () => {
++    const bare = { version: '0.2.1-alpha.3', upstreamRef: 'dsh-v0.2.1-alpha.3', feedUrl: FEED,
++      releaseUrl: 'https://github.com/example/dsh/releases/tag/x', publishedAt: '2026-10-16T04:00:00Z' }
++    const parsed = parseDesktopRollbackCatalog(catalog([bare]))
++    expect(parsed.versions[0]).not.toHaveProperty('sessionFormatVersion')
++    expect(parsed.versions[0]).not.toHaveProperty('storageSchemaVersion')
++  })
++
++  it('omits an absent current version', () => {
++    expect(parseDesktopRollbackCatalog({ schemaVersion: 1, versions: [] })).toEqual({ schemaVersion: 1, versions: [] })
++  })
++
++  it('accepts the null current the pipeline writes for an empty catalog', () => {
++    expect(parseDesktopRollbackCatalog({ schemaVersion: 1, current: null, versions: [] }))
++      .toEqual({ schemaVersion: 1, versions: [] })
++  })
++
++  it.each([
++    ['unsupported schema', { schemaVersion: 2, versions: [] }],
++    ['missing versions', { schemaVersion: 1 }],
++    ['entry is not an object', catalog(['text'])],
++    ['missing feed URL', catalog([{ ...entry({ version: '0.2.1-alpha.3' }), feedUrl: undefined }])],
++    ['empty upstream ref', catalog([{ ...entry({ version: '0.2.1-alpha.3' }), upstreamRef: ' ' }])],
++    ['invalid version', catalog([entry({ version: 'not-a-version' })])],
++    ['invalid current', { schemaVersion: 1, current: 'nope', versions: [] }],
++    ['negative format', catalog([entry({ version: '0.2.1-alpha.3', sessionFormatVersion: -1 })])],
++    ['fractional format', catalog([entry({ version: '0.2.1-alpha.3', storageSchemaVersion: 1.5 })])],
++  ])('rejects %s', (_name, value) => {
++    expect(() => parseDesktopRollbackCatalog(value)).toThrow(/desktop rollback/u)
++  })
++})
++
++describe('rollback candidate selection', () => {
++  const parsed = parseDesktopRollbackCatalog(catalog([
++    entry({ version: '0.2.1-alpha.2' }),
++    entry({ version: '0.2.1-alpha.4' }),
++    entry({ version: '0.2.1-alpha.3' }),
++  ]))
++
++  it('offers only strictly older versions, newest first', () => {
++    expect(resolveRollbackCandidates(parsed, '0.2.1-alpha.4').map(item => item.version))
++      .toEqual(['0.2.1-alpha.3', '0.2.1-alpha.2'])
++  })
++
++  it('honours the limit and ignores an unparsable running version', () => {
++    expect(resolveRollbackCandidates(parsed, '0.2.1-alpha.4', 1).map(item => item.version)).toEqual(['0.2.1-alpha.3'])
++    expect(resolveRollbackCandidates(parsed, 'not-a-version')).toEqual([])
++  })
++
++  it('finds the entry of the running version and reports an unarchived one as absent', () => {
++    expect(findCatalogVersion(parsed, '0.2.1-alpha.3')?.upstreamRef).toBe('dsh-v0.2.1-alpha.3')
++    expect(findCatalogVersion(parsed, '0.2.1-alpha.9')).toBeUndefined()
++  })
++})
++
++describe('rollback data compatibility', () => {
++  const current = version({ version: '0.2.1-alpha.4' })
++
++  it('accepts a target that declares the same data formats', () => {
++    expect(rollbackCompatibility(version({ version: '0.2.1-alpha.3' }), current)).toEqual({ safe: true, risks: [] })
++  })
++
++  it('reports an older session format as a risk', () => {
++    expect(rollbackCompatibility(version({ version: '0.2.1-alpha.3', sessionFormatVersion: 3 }), current))
++      .toEqual({ safe: false, risks: ['session-format'] })
++  })
++
++  it('reports an older storage schema as a risk', () => {
++    expect(rollbackCompatibility(version({ version: '0.2.1-alpha.3', storageSchemaVersion: 0 }), current))
++      .toEqual({ safe: false, risks: ['storage-schema'] })
++  })
++
++  // The query cache is derived data that the older shell can rebuild, so its schema is not part of the guard.
++  it('ignores the derived query-cache schema and reports both durable risks together', () => {
++    expect(rollbackCompatibility(version({ version: '0.2.1-alpha.3', sessionQuerySchemaVersion: 1 }), current).safe).toBe(true)
++    expect(rollbackCompatibility(
++      version({ version: '0.2.1-alpha.2', sessionFormatVersion: 3, storageSchemaVersion: 0 }), current).risks)
++      .toEqual(['session-format', 'storage-schema'])
++  })
++
++  it('cannot promise anything without the running version or its declared formats', () => {
++    const bare = first(catalog([{
++      version: '0.2.1-alpha.3', upstreamRef: 'dsh-v0.2.1-alpha.3', feedUrl: FEED,
++      releaseUrl: 'https://github.com/example/dsh/releases/tag/x', publishedAt: '2026-10-16T04:00:00Z',
++    }]))
++    expect(rollbackCompatibility(bare, undefined)).toEqual({ safe: false, risks: ['current-unknown'] })
++    expect(rollbackCompatibility(bare, version({ version: '0.2.1-alpha.4' })))
++      .toEqual({ safe: false, risks: ['format-unknown'] })
++  })
++})
++
++describe('catalog origin resolution', () => {
++  const yml = 'provider: generic\nurl: https://github.com/example/dsh/releases/download/linux-latest\nchannel: nightly\n'
++
++  it('prefers a non-empty environment override over the packaged feed', () => {
++    expect(resolveRollbackOrigin({ DSH_DESKTOP_LINUX_UPDATE_ORIGIN: 'http://127.0.0.1:8899/' }, yml))
++      .toBe('http://127.0.0.1:8899')
++    expect(resolveRollbackOrigin({ DSH_DESKTOP_LINUX_UPDATE_ORIGIN: '   ' }, yml))
++      .toBe('https://github.com/example/dsh/releases/download/linux-latest')
++  })
++
++  it('reads the packaged feed, quoted or not, and reports an absent one', () => {
++    expect(resolveRollbackOrigin({}, yml)).toBe('https://github.com/example/dsh/releases/download/linux-latest')
++    expect(resolveRollbackOrigin({}, "url: 'https://example.test/feed/' \n")).toBe('https://example.test/feed')
++    expect(resolveRollbackOrigin({}, undefined)).toBeUndefined()
++    expect(resolveRollbackOrigin({}, 'provider: generic\n')).toBeUndefined()
++  })
++
++  it('builds the catalog URL beside the feed', () => {
++    expect(versionCatalogUrl('https://example.test/feed/')).toBe('https://example.test/feed/versions.json')
++  })
++})
+diff --git a/apps/desktop/tests/update-schedule.spec.ts b/apps/desktop/tests/update-schedule.spec.ts
+index 9d481f21..6cb8fe80 100644
+--- a/apps/desktop/tests/update-schedule.spec.ts
++++ b/apps/desktop/tests/update-schedule.spec.ts
+@@ -184,3 +184,40 @@ describe('ordinary update polling configuration', () => {
+     expect(() => resolveDesktopUpdateScheduleConfig({ [`DSH_DESKTOP_UPDATE_CHECK_${suffix}`]: value })).toThrow()
+   })
+ })
++
++describe('user-controlled automatic polling', () => {
++  it('stops rearming while switched off and keeps explicit checks working', async () => {
++    const f = fixture()
++    f.schedule.setAutomatic(false)
++    await f.schedule.check(true)
++    expect(f.checkForUpdates).toHaveBeenCalledTimes(1)
++    expect(vi.getTimerCount()).toBe(0)
++    await vi.advanceTimersByTimeAsync(60_000)
++    expect(f.checkForUpdates).toHaveBeenCalledTimes(1)
++    await f.schedule.check(true)
++    expect(f.checkForUpdates).toHaveBeenCalledTimes(2)
++  })
++
++  it('checks once immediately when switched back on, then resumes the interval', async () => {
++    const f = fixture()
++    f.schedule.setAutomatic(false)
++    await f.schedule.check(true)
++    expect(f.checkForUpdates).toHaveBeenCalledTimes(1)
++    f.schedule.setAutomatic(true)
++    await vi.advanceTimersByTimeAsync(0)
++    expect(f.checkForUpdates).toHaveBeenCalledTimes(2)
++    await vi.advanceTimersByTimeAsync(10_000)
++    expect(f.checkForUpdates).toHaveBeenCalledTimes(3)
++  })
++
++  it('ignores a repeated value and does not revive a disposed schedule', async () => {
++    const f = fixture()
++    f.schedule.setAutomatic(true)
++    expect(f.checkForUpdates).not.toHaveBeenCalled()
++    f.schedule.dispose()
++    f.schedule.setAutomatic(true)
++    await vi.advanceTimersByTimeAsync(60_000)
++    expect(f.checkForUpdates).not.toHaveBeenCalled()
++    expect(vi.getTimerCount()).toBe(0)
++  })
++})

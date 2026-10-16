@@ -277,17 +277,43 @@ jobs:
           echo "==> deb control"
           dpkg-deb -f "$deb" Package Version Maintainer Architecture
 
+      # 「回滚到旧版本」要判断旧版本能不能读当前的数据，所以目录里的每一条都得带上会话/查询/存储
+      # 三个格式版本。它们只在源码里定义，构建期直接从上游检出读，避免手抄漂移；读不到就直接失败 ——
+      # 目录里绝不能出现格式版本缺失的条目。
+      - name: 提取格式版本
+        id: schemas
+        run: |
+          read_const() {
+            local file="$1" name="$2" value
+            value="$(grep -oE "${name} = [0-9]+" "$file" | grep -oE '[0-9]+' | head -1)"
+            [[ -n "$value" ]] || { echo "在 $file 里找不到 $name" >&2; exit 1; }
+            printf '%s' "$value"
+          }
+          session_format="$(read_const upstream/packages/core/session/src/types.ts SESSION_FORMAT_VERSION)"
+          session_query="$(read_const upstream/packages/session-query/session-query-sqlite/src/schema.ts SESSION_QUERY_SQLITE_SCHEMA_VERSION)"
+          storage_schema="$(read_const upstream/packages/storage/storage-sqlite/src/schema.ts STORAGE_SQLITE_SCHEMA_VERSION)"
+          {
+            echo "session_format=$session_format"
+            echo "session_query=$session_query"
+            echo "storage_schema=$storage_schema"
+          } >> "$GITHUB_OUTPUT"
+          echo "==> 格式版本：session=$session_format、session-query=$session_query、storage=$storage_schema"
+
       # 两处发布，职责分开：
       # - 归档 release（tag = 上游 ref，如 dsh-v0.2.1-alpha.3）：只追加、不删除，是**回退**用的历史版本；
       #   同一个上游版本重发（补丁修复）时新产物文件名带 <日期>.<序号>，旧的继续留着。
       # - 滚动 release（linux-latest）：应用内更新读的 feed（nightly-linux.yml + 当前版本的产物），
-      #   只装当前版本，所以这里仍然清掉上一版遗留的资产。
+      #   只装当前版本，所以这里仍然清掉上一版遗留的资产。清理只匹配 AppImage/deb/rpm/更新元数据，
+      #   versions.json 不在其中，不会被误删（下一轮也是先清后传，顺序上更安全）。
       # publish_feed=0 时只写归档 release，用户正在用的 feed 一动不动（补发历史版本就是这个场景）。
       - name: 发布（历史归档 + 滚动 feed）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLISH_FEED: ${{ needs.prepare.outputs.publish_feed }}
           ARCHIVE_TAG: ${{ needs.prepare.outputs.archive_tag }}
+          SESSION_FORMAT: ${{ steps.schemas.outputs.session_format }}
+          SESSION_QUERY_SCHEMA: ${{ steps.schemas.outputs.session_query }}
+          STORAGE_SCHEMA: ${{ steps.schemas.outputs.storage_schema }}
         run: |
           set -euo pipefail
           ref="${{ needs.prepare.outputs.ref }}"
@@ -298,12 +324,25 @@ jobs:
           appimage="${{ steps.artifacts.outputs.appimage }}"
           deb="${{ steps.artifacts.outputs.deb }}"
 
+          # 目录字段的来源：产物文件名、sha512（base64，与 feed 元数据同一套算法）与字节数。
+          appimage_name="$(basename "$appimage")"
+          appimage_sha512="$(openssl dgst -sha512 -binary "$appimage" | base64 -w0)"
+          appimage_size="$(stat -c%s "$appimage")"
+          deb_name="$(basename "$deb")"
+          deb_sha512="$(openssl dgst -sha512 -binary "$deb" | base64 -w0)"
+          deb_size="$(stat -c%s "$deb")"
+
           # 正文带上补丁集指纹、构建序号与来源（HTML 注释，界面上看不见）；prepare 的幂等判断与
-          # 序号递增读它们，source-commit 说明这份产物是哪次提交的补丁集构建出来的（回退时用得上）。
+          # 序号递增读 build-fingerprint / build-number，source-commit 说明这份产物是哪次提交的
+          # 补丁集构建出来的（回退时用得上）。其余注释是给 versions.json 目录读的：格式版本用于
+          # 判断旧版本能不能读当前数据，产物文件名/sha512/size 用于直接下载并校验。
           notes="$RUNNER_TEMP/release-notes.md"
-          printf '%s\n\n<!-- build-fingerprint: %s -->\n<!-- build-number: %s -->\n<!-- upstream-ref: %s -->\n<!-- source-commit: %s -->\n' \
+          printf '%s\n\n<!-- build-version: %s -->\n<!-- build-fingerprint: %s -->\n<!-- build-number: %s -->\n<!-- upstream-ref: %s -->\n<!-- source-commit: %s -->\n<!-- session-format: %s -->\n<!-- session-query-schema: %s -->\n<!-- storage-schema: %s -->\n<!-- appimage: %s -->\n<!-- appimage-sha512: %s -->\n<!-- appimage-size: %s -->\n<!-- deb: %s -->\n<!-- deb-sha512: %s -->\n<!-- deb-size: %s -->\n' \
             "DeepSeek Harness desktop for Linux，版本 $version（上游 $ref 的第 $build_number 次构建，unsigned）。AppImage 支持应用内自更新（feed 在 $RELEASE_TAG release 的 nightly-linux.yml）；deb 用 apt 安装、手动升级。本 release 是上游 $ref 的历史归档，只追加不删除，可直接下载回退。" \
-            "$fingerprint" "$build_number" "$ref" "$GITHUB_SHA" > "$notes"
+            "$version" "$fingerprint" "$build_number" "$ref" "$GITHUB_SHA" \
+            "$SESSION_FORMAT" "$SESSION_QUERY_SCHEMA" "$STORAGE_SCHEMA" \
+            "$appimage_name" "$appimage_sha512" "$appimage_size" \
+            "$deb_name" "$deb_sha512" "$deb_size" > "$notes"
 
           if (( ! PUBLISH_FEED )); then
             echo "==> 本次只写归档 release $ARCHIVE_TAG，不动 $RELEASE_TAG"
@@ -336,4 +375,15 @@ jobs:
             # 标题记来源 ref、正文记补丁集指纹；prepare 用这两个一起判断是否需要重新构建。
             gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$ref" --notes-file "$notes"
             echo "==> feed: https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+
+            # 历史版本目录：客户端从 <origin>/versions.json 读所有可回退的版本，而 origin 就是滚动
+            # release 的下载前缀，所以目录必须挂到同一个 release 上，与 feed 同源同时更新。
+            # 只归档的运行（publish_feed=0）在这一步之外，绝不改滚动 release，避免目录里混进
+            # 没进 feed 的版本、或漏掉正在生效的版本。
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --slurp \
+              | node scripts/versions-index.mjs > "$RUNNER_TEMP/versions.json"
+            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$RUNNER_TEMP/versions.json"
+            versions_count="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).versions.length' "$RUNNER_TEMP/versions.json")"
+            versions_current="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).current' "$RUNNER_TEMP/versions.json")"
+            echo "==> 版本目录：https://github.com/$GITHUB_REPOSITORY/releases/download/$tag/versions.json（共 $versions_count 条，current=$versions_current）"
           fi

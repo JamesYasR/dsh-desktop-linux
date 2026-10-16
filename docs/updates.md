@@ -102,6 +102,31 @@ workflow）。
 DSH_DESKTOP_LINUX_UPDATE_ORIGIN=http://127.0.0.1:8899 ./deepseek-harness-*.AppImage
 ```
 
+### 应用内选择版本：自动检查开关与回退
+
+这三个入口都在应用菜单「应用」里（各语言用各自本地化文案，位置与「检查更新…」同一列）：
+
+| 菜单项 | 行为 | 偏好字段 |
+|---|---|---|
+| **自动检查更新**（勾选） | 关掉后启动 / 定时 / 窗口聚焦 / 休眠恢复都不再自动检查，也不会提示新版本；手动「检查更新…」不受影响 | `updates.automaticChecks` |
+| **回滚到旧版本 ▸** | 列出比当前版本更早的归档版本（读 `<origin>/versions.json`），确认后走既有的下载 → sha512 校验 → 替换自身 → 重启流程 | `updates.pinnedFeedUrl` |
+| **解除版本锁定** | 回滚后出现；把更新源换回产物自带的那条，并关掉降级许可 | 同上 |
+
+细节与边界：
+
+- **只列更早的版本**，而且回滚完成后会自动关掉「自动检查更新」、把更新源**锁定**到该版本的归档 release，
+  所以不会立刻被提示升回新版；想恢复跟随时点「解除版本锁定」。
+- **数据格式守卫**：目录里每个版本都带 `sessionFormatVersion` / `storageSchemaVersion`（CI 在构建期从上游源码读出，
+  写进归档 release 正文）。目标版本低于当前版本时菜单里会标「（可能读不了当前数据）」，确认框逐条列出风险，
+  并且**默认按钮是取消**；无法判定（目录里没有当前版本、或字段缺失）也按不安全处理。
+  会话查询缓存（`SESSION_QUERY_SQLITE_SCHEMA_VERSION`）是可重建的派生数据，不参与守卫。
+- **只有以 AppImage 方式运行才有这个入口**：替换自身依赖 `$APPIMAGE`，deb/rpm 安装的那份不显示「回滚到旧版本」。
+- 偏好写在 Electron 的 userData 下（本机为 `~/.config/@deepseek-ai/dsh-desktop/desktop/settings.json`，权限 0600）；
+  文件损坏或读不动时**不会被覆盖**，只回落到默认值（自动检查=开、无锁定）。
+- 锁定期间把「自动检查更新」再勾上也没问题：它只会查那一条被锁定的 feed，看不到新版。
+- 回滚用的目录由 CI 在每次滚动发布时重新生成，字段来源是各归档 release 正文里的 HTML 注释，
+  生成脚本是 [scripts/versions-index.mjs](../scripts/versions-index.mjs)。
+
 ### 版本号：同一上游版本重发时必须递增
 
 `nightly-linux.yml` 的 `version` 会与已安装应用的 `app.getVersion()` 做 `semver.gt` 比较，所以

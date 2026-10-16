@@ -74,6 +74,9 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         '0018-desktop-linux-window-caption.patch'
         # 0019 独立于前面所有补丁（只改 desktop-host/src/cli.ts），放最后不影响顺序。
         '0019-desktop-host-cli-unpacked-support-dir.patch'
+        # 0020 是叠加补丁：要改的 main.ts / locale.ts 已被 0018 改过、update-coordinator.ts 已被 0017
+        # 改过，所以必须在 0001–0019 之后应用（见 patches/README.md）。
+        '0020-desktop-linux-update-controls.patch'
         # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
         # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
         'tray-linux.png')
@@ -85,17 +88,18 @@ sha256sums=('290fc4220a4873f720454c12e3aa43d16434d282c48841a3246c739f2ab35637'
             '2bc73d363dbfc6de0dc12866a641efd509b007778c10a5df2a113a44a68e7374'
             '188c28b94fdd829f6d8cf8748d19d0d152cf9144ef8f3c51c2e5fd651a34507a'
             'b78a49f2ca34679f78aad141f3d99ee74bec205b60d19b26fe9a1f0e69f88f2b'
-            '560c968e3af27ceff604906222492dff40ef4fbfa8e78966789710ef2fd3c154'
+            '45873c109f25ba974ba393c93889fee51ded8b7e3fd9ef32219b14e17984c661'
             '52e37a49dddbe1831e1d0134dd1818495b9aa329f8b7ca1edd7cc3fa69c39e50'
             '062567a5bcd5f4d8e63368a98927055358318f428c88fb851846d64fb859db8e'
             'a3ff4a524a4ebe28551797bd36dab7b7139516e668462f054e616e8a521e3e8f'
             'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715'
             '042117088d416a602985e595e768b2d921e98b64477eaa6a04383a958ae79ba3'
-            '9496d3d4c4c9741a396c940bd0babd97e1d58111da31ba746cf0a6061825adba'
+            '312749e4f22e2aa81a3192dc34a700840fb4c9c4aa2ca727251e086f1a303ad6'
             '94bb4dd31baa8a3364bc27a280dc83a1c7b8155956517179801917474d4c1c4e'
             '90b8c8e41597a92dfbdeba8f9a94c6781e6eca31f092c22623891029ec23ca2b'
             'cb813b65e76920141c7cc3bd17a27612621e81ef4012c74f9b60ce5616d52c88'
             'a60d44704113c8d5a5b85007fc4d47c7302397d11fff3b9b3633f8f5cfb49bb7'
+            'c9363b793dc3954dab5314b59c1c4c8adb541f511b5cce539c572175628b5dca'
             'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 
 prepare() {

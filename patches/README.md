@@ -138,6 +138,16 @@ AppImage 更新通道接通，细节见 [docs/updates.md](../docs/updates.md)。
 - **产物是 unsigned 的，更新只校验 sha512，没有签名校验。** feed 的信任边界就是「谁能写它」，
   所以公网 feed 必须由发布者自己控制的 HTTPS 源。
 
+### 发布历史版本目录（versions.json）
+
+CI 在更新滚动 feed 的同时，还会把一份 `versions.json` 传到 `linux-latest`：它由
+[`scripts/versions-index.mjs`](../scripts/versions-index.mjs) 扫描所有 `dsh-v*` 归档 release 生成，
+字段全部来自各 release 正文里的 HTML 注释（`build-version`、`upstream-ref`、`session-format`、
+`appimage-sha512` 等），不读任何额外状态。应用内「回滚到旧版本」就是读 `<origin>/versions.json`
+（origin 即 `linux-latest` 的下载前缀）拿到可回退版本清单，再按目录里的文件名、sha512 与大小下载校验。
+目录与 feed 必须同源同步，所以 `publish_feed=0`（只补归档）时不会更新它。目录里的格式版本注释由构建
+job 从上游常量里提取，取不到就让构建失败，避免目录里出现无法判断兼容性的条目。
+
 ## 让 Linux 用上跨平台标题栏（0018）
 
 上游只给 Windows 的主窗口设了 `titleBarStyle: 'hidden'` + `titleBarOverlay`，Linux 落回 GTK 的
@@ -243,3 +253,29 @@ Error: Cannot find module '<…>/resources/app/runtime/primary-runtime/dependenc
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|
 | `0019-desktop-host-cli-unpacked-support-dir.patch` | `apps/desktop-host/src/cli.ts` | 新增 `resolveSupportDir()`：候选 = 存档父目录下的 `runtime/`、以及 `runtimeDir` 上两级的 `runtime/`；取第一个含 `primary-runtime/dependencies/pnpm/bin/pnpm.mjs` 的，都没有时回落到上游原式（错误仍指向原位置）。三种布局实测都对 |
+
+## 更新入口交给用户（0020）
+
+| 补丁 | 覆盖文件 | 内容 |
+|---|---|---|
+| `0020-desktop-linux-update-controls.patch` | `src/settings.ts`、`src/update-schedule.ts`、`src/update-coordinator.ts`、`src/update-rollback.ts`（新增）、`src/locale.ts`、`src/main.ts`、`tests/settings.spec.ts`、`tests/update-schedule.spec.ts`、`tests/update-rollback.spec.ts`（新增） | 「应用」菜单加两件事：**自动检查更新**勾选项（关掉后启动 / 定时 / 窗口聚焦 / 休眠恢复都不自动检查，也不提示新版本；手动「检查更新…」照旧）与**回滚到旧版本**子菜单（读 CI 发布的 `versions.json`，列出更早的归档版本，带数据格式守卫；选中后复用 electron-updater 的下载 / 校验 / 自替换路径，完成后把 feed 锁定到那一版并关掉自动检查，可再从菜单解除锁定） |
+
+`0020` 是**叠加补丁**：它要改的 `src/main.ts` 与 `src/locale.ts` 已被 `0018` 改过、
+`src/update-coordinator.ts` 已被 `0017` 改过，所以它在「已应用 0001–0019 的树」上生成，
+必须最后应用（与 0016–0018 同理）。
+
+### 实现要点与边界
+
+- **降级许可**：electron-updater 的 `isUpdateAvailable()` 在 `allowDowngrade === true` 时把旧版本也算作可用更新
+  （`AppUpdater.js` 的 `return this.allowDowngrade && isLatestVersionOlder`），所以回滚不需要另写下载器。
+  `DesktopUpdateCoordinator.useFeed(url, allowDowngrade)` 是唯一开合并发它的地方；正常升级路径仍保持构造时的
+  `allowDowngrade = false`，一行未改。
+- **自动检查的边界**：只关「普通 feed 轮询」（自己的定时器 + 启动 / 聚焦 / 休眠恢复）。强制更新策略
+  （`mandatoryPolicy`）与手动检查不受这个开关影响——前者是平台策略、后者是用户显式意图，都不属于「自动检查」。
+- **数据格式守卫**：只守 `sessionFormatVersion` 与 `storageSchemaVersion`（都是持久数据）；会话查询缓存
+  （`SESSION_QUERY_SQLITE_SCHEMA_VERSION`）是可重建的派生数据，不参与守卫。任何一侧信息缺失都按「不安全」处理，
+  确认框默认按钮是「取消」。
+- **偏好持久化**：`updates.automaticChecks`（默认开）与 `updates.pinnedFeedUrl`（回滚锁定的 feed，默认无），
+  写 `userData/desktop/settings.json`。写入是「读原始 JSON → 只合并这两个键 → 临时文件 + rename（0600）」，
+  文档损坏时拒绝覆盖；只读路径本来就只回落到默认值。
+- **只有以 AppImage 方式运行才显示回滚入口**（`$APPIMAGE` 存在），因为替换自身依赖它；deb/rpm 安装的那份不显示。
