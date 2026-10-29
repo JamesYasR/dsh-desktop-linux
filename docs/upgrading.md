@@ -22,7 +22,9 @@ cd ~/dsh-workspace/杂活/dsh-desktop-linux
 
 把本仓库推到你的 GitHub，然后：
 
-1. `.github/workflows/update-feed.yml` 每天扫一次上游 tag，发现新版本就自动
+1. `.github/workflows/update-feed.yml` 每天扫一次上游 tag，仅选择 `dsh-vX.Y.Z-rc.N`（RC）或
+   `dsh-vX.Y.Z`（正式版），跳过 alpha、beta、dev、nightly 及额外构建后缀。版本按数字比较，
+   同版本正式版高于 RC；没有合格 tag 就跳过构建。发现新版本就自动
    `fetch-upstream → apply-patches → build --appimage → 发布到滚动的 linux-latest release`。
 2. 产物里的 `DSH_DESKTOP_LINUX_UPDATE_ORIGIN` 指向该 release，所以**应用内「检查更新」会直接
    提示新版本**，用户点两下就升级（AppImage 替换自身）。

@@ -1,13 +1,14 @@
 name: linux-update-feed
 
-# 定时扫上游最新 tag，把 Linux AppImage 构建出来并发到一个滚动的 linux-latest release。
+# 定时扫上游最新 RC / 正式版 tag，跳过 alpha / beta / dev / nightly 等开发版本，
+# 把 Linux AppImage 构建出来并发到一个滚动的 linux-latest release。
 # 应用内「检查更新」读的就是这个 release 里的 nightly-linux.yml，所以这条流水线跑通一次，
 # 之后上游发新版就会自动出现在用户的更新入口里。
 #
 # 幂等键 = 上游 ref + 补丁集指纹（patches/ PKGBUILD assets/ scripts/ 与 workflow 自身的 git 树哈希）。
 # 只比 ref 是不够的：补丁修好之后 ref 没变，那样会永远跳过、修不进来。指纹记在 release 正文里。
 #
-# 手动触发可指定 ref（默认取上游最新的 dsh-v* tag）。推到 master 也会跑一次，
+# 手动触发可指定 ref（留空则取上游最新 RC / 正式版 tag）。推到 master 也会跑一次，
 # 补丁改了但上游没发新版时，靠指纹判定需要重发。
 #
 # 版本号：同一上游版本的第 1 次发布与上游一致，第 2 次起带 <日期>.<序号>（上游 desktop-build-version.mjs
@@ -23,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: '上游 ref（tag 或分支）；留空则取最新的 dsh-v* tag'
+        description: '上游 ref（tag 或分支）；留空则仅取最新 RC / 正式版 tag'
         required: false
         default: ''
       force:
@@ -31,7 +32,7 @@ on:
         type: boolean
         default: false
       publish_feed:
-        description: '是否更新滚动 feed（linux-latest）；留空=自动（仅当 ref 是最新 dsh-v* tag 时更新）'
+        description: '是否更新滚动 feed（linux-latest）；留空=自动（仅当 ref 是最新 RC / 正式版 tag 时更新）'
         type: string
         default: ''
       build_number:
@@ -62,21 +63,30 @@ jobs:
       build_number: ${{ steps.idempotency.outputs.build }}
       archive_tag: ${{ steps.idempotency.outputs.archive_tag }}
       publish_feed: ${{ steps.upstream.outputs.publish_feed }}
-      skip: ${{ steps.idempotency.outputs.skip }}
+      skip: ${{ steps.upstream.outputs.skip == '1' && '1' || steps.idempotency.outputs.skip }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
       - name: 解析上游 ref
         id: upstream
         env:
           INPUT_REF: ${{ github.event.inputs.ref }}
           INPUT_PUBLISH_FEED: ${{ github.event.inputs.publish_feed }}
         run: |
-          # 最新 tag 既用于「不指定 ref」时的默认值，也用于判断要不要更新滚动 feed：
+          # 只自动跟进 dsh-vX.Y.Z-rc.N / dsh-vX.Y.Z，按版本数字排序（正式版高于同版本 RC）。
+          # 最新合格 tag 既用于「不指定 ref」时的默认值，也用于判断要不要更新滚动 feed：
           # 补发历史版本时 ref 不是最新 tag，publish_feed 自动落成 0，只补归档。
           newest="$(git ls-remote --tags --refs https://github.com/deepseek-ai/deepseek-harness.git 'dsh-v*' \
-            | awk -F/ '{print $NF}' | sort -V | tail -1)"
+            | awk -F/ '{print $NF}' | python3 scripts/latest-upstream-release.py)"
           ref="$INPUT_REF"
           [[ -n "$ref" ]] || ref="$newest"
-          [[ -n "$ref" ]] || { echo "无法确定上游 ref" >&2; exit 1; }
+          if [[ -z "$ref" ]]; then
+            echo "==> 跳过：上游尚无符合条件的 RC / 正式版 tag"
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           case "${INPUT_PUBLISH_FEED:-}" in
             true|1)  publish_feed=1 ;;
             false|0) publish_feed=0 ;;
@@ -84,18 +94,16 @@ jobs:
           esac
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "publish_feed=$publish_feed" >> "$GITHUB_OUTPUT"
+          echo "skip=0" >> "$GITHUB_OUTPUT"
           if (( publish_feed )); then feed_state='更新'; else feed_state='不动'; fi
-          echo "==> 上游 ref：$ref（最新 tag：$newest；滚动 feed：$feed_state）"
-
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
+          echo "==> 上游 ref：$ref（最新 RC / 正式版 tag：${newest:-无}；滚动 feed：$feed_state）"
 
       # 决定「同样的上游版本要不要重发」的是补丁集，不是 ref：只要 patches/、PKGBUILD、assets/、
       # scripts/ 或本 workflow 变过，指纹就变。git ls-tree 直接取这些路径的 blob 哈希，比逐个
       # sha256 少依赖一层 shell 细节。README/文档改动不影响指纹，因此不会触发重编。
       - name: 计算补丁集指纹
         id: fingerprint
+        if: steps.upstream.outputs.skip != '1'
         run: |
           fingerprint="$(git ls-tree -r HEAD -- patches PKGBUILD assets scripts .github/workflows \
             | sha256sum | cut -c1-16)"
@@ -109,6 +117,7 @@ jobs:
       # - 归档 release（tag = 上游 ref）：历史版本，正文同样记指纹与序号，补发时按它递增。
       - name: 幂等判断与构建序号
         id: idempotency
+        if: steps.upstream.outputs.skip != '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE: ${{ github.event.inputs.force }}
@@ -164,7 +173,7 @@ jobs:
 
   build:
     needs: prepare
-    if: needs.prepare.outputs.skip != '1'
+    if: needs.prepare.outputs.skip == '0'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:

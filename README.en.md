@@ -16,7 +16,7 @@ system-style window buttons and Application/Edit as popup menus on the caption.<
 | **Cross-platform appearance** | Upstream draws a custom titlebar on Windows only; on Linux it falls back to the GTK titlebar **plus** menu bar (110px of non-client area, measured). Linux now takes the same path: a 40px caption, window buttons drawn by Electron's overlay in the system style, and the native menu bar folded into the caption |
 | **In-application updates** | Upstream's update channel only knows mac/win, and unsigned builds skip update configuration entirely. The AppImage channel is wired here: check → download → verify sha512 → replace itself → restart |
 | **One-command install** | Download the latest release → verify sha512 → install into `~/.local` → create a desktop entry. It installs per user rather than into `/opt` so self-update can replace its own file |
-| **Automatic upstream tracking** | CI scans upstream tags daily and publishes a build when the patches still apply; the in-application updater reads that same release. The idempotency key is the upstream ref **plus a patch-set fingerprint**, so a patch fix pushed to master republishes immediately while documentation-only commits trigger nothing; a republish increments the version (`<upstream version>.<date>.<index>`), so already-installed users receive the fix. A conflicting patch fails the run and emails the owner instead of shipping something half-built |
+| **Automatic upstream tracking** | CI tracks only upstream RC tags (`dsh-vX.Y.Z-rc.N`) and stable tags (`dsh-vX.Y.Z`) daily, skipping alpha, beta, dev, nightly and extra build suffixes. It publishes a build when the patches still apply; the in-application updater reads that same release. The idempotency key is the upstream ref **plus a patch-set fingerprint**, so a patch fix pushed to master republishes immediately while documentation-only commits trigger nothing; a republish increments the version (`<upstream version>.<date>.<index>`), so already-installed users receive the fix. A conflicting patch fails the run and emails the owner instead of shipping something half-built |
 | **Release history is kept** | Every build is archived in the release tagged after its upstream ref (e.g. `dsh-v0.2.1-alpha.4`), which is append-only, so any past version can be downloaded again to roll back; `linux-latest` is only the rolling feed the in-application updater reads and always holds just the current version. Re-issuing an old version writes the archive without touching the feed — see [docs/updates.md](docs/updates.md) |
 | **You decide updates and rollbacks** | The Application menu can switch **automatic update checks** off (no automatic checks and no new-version prompts; manual "Check for Updates…" still works) and offers **Roll Back to an Earlier Version**: it lists every archived release and takes the same download / sha512 verification / self-replace / restart path. A rollback pins the update feed to that version and turns automatic checks off until you unlock it from the same menu — see [docs/updates.md](docs/updates.md) |
 
@@ -55,7 +55,7 @@ patches, dependencies, or types:
 
 ## When upstream releases
 
-Usually nothing: CI tracks it and the application's Check for Updates does the rest. To build locally:
+For upstream RC and stable releases, usually nothing: CI tracks them and the application's Check for Updates does the rest. To build locally:
 
 ```bash
 ./scripts/upgrade.sh --check     # verify the patches still apply; a failure rolls back fully and names the file to fix

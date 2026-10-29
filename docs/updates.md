@@ -68,8 +68,11 @@ deepseek-harness-<version>-linux-x86_64-unsigned.AppImage # 载荷
 把这两个文件放到**同一个目录**下即可，任何静态 HTTP 服务都行。相对路径按 feed 根解析，
 所以换版本时整个目录替换即可。
 
-`.github/workflows/update-feed.yml` 就是干这件事的流水线：定时扫上游最新 tag，
-打补丁、构建、把这两个文件发到本仓库一个滚动的 `linux-latest` release。
+`.github/workflows/update-feed.yml` 就是干这件事的流水线：定时选上游最新的 RC tag
+（`dsh-vX.Y.Z-rc.N`）或正式版 tag（`dsh-vX.Y.Z`），打补丁、构建、把这两个文件发到本仓库
+一个滚动的 `linux-latest` release。alpha、beta、dev、nightly 及额外构建后缀不参与自动跟进；
+同版本正式版高于 RC，RC 序号按数字比较，没有合格 tag 时跳过构建。
+手动触发时留空 `ref` 也遵循此规则；显式指定 `ref` 仍可补发历史版本。
 
 ### 发布历史与回退（两处 release 各管一件事）
 
@@ -82,7 +85,7 @@ deepseek-harness-<version>-linux-x86_64-unsigned.AppImage # 载荷
 `linux-latest` 只保证应用内更新读到当前版本，不承担历史。
 
 **补发历史版本**（例如补上已经不在 feed 里的 `dsh-v0.2.1-alpha.2`）：在承载该版本补丁集的分支上手动触发
-workflow，把 `publish_feed` 设为 `false`（或留空 —— 只要 `ref` 不是最新上游 tag 就自动不动 feed）。
+workflow，把 `publish_feed` 设为 `false`（或留空 —— 只要 `ref` 不是最新 RC / 正式版 tag 就自动不动 feed）。
 这样只写归档 release，用户正在用的 feed 一动不动：
 
 ```bash
