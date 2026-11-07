@@ -1,8 +1,8 @@
 diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
-index fc19021..9fa1fc7 100644
+index a3c5f5d9..a6a5a9ae 100644
 --- a/apps/desktop/src/ipc.ts
 +++ b/apps/desktop/src/ipc.ts
-@@ -29,6 +29,8 @@ export const DESKTOP_IPC = {
+@@ -37,6 +37,8 @@ export const DESKTOP_IPC = {
    updatesPresentation: 'dsh-desktop:updates-presentation',
    nativeThemeSet: 'dsh-desktop:native-theme-set',
    windowFullscreen: 'dsh-desktop:window-fullscreen',
@@ -13,7 +13,7 @@ index fc19021..9fa1fc7 100644
  } as const
 diff --git a/apps/desktop/src/linux-caption.ts b/apps/desktop/src/linux-caption.ts
 new file mode 100644
-index 0000000..af12953
+index 00000000..af12953c
 --- /dev/null
 +++ b/apps/desktop/src/linux-caption.ts
 @@ -0,0 +1,90 @@
@@ -109,7 +109,7 @@ index 0000000..af12953
 +}
 diff --git a/apps/desktop/src/linux-window.ts b/apps/desktop/src/linux-window.ts
 new file mode 100644
-index 0000000..4a0a71c
+index 00000000..4a0a71c6
 --- /dev/null
 +++ b/apps/desktop/src/linux-window.ts
 @@ -0,0 +1,46 @@
@@ -160,12 +160,12 @@ index 0000000..4a0a71c
 +  return value === 'native' || value === 'caption' || value === 'rounded' ? value : undefined
 +}
 diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
-index 5d9d460..de4b9c3 100644
+index f5d30b82..ae352ad4 100644
 --- a/apps/desktop/src/locale.ts
 +++ b/apps/desktop/src/locale.ts
 @@ -1,6 +1,10 @@
- /** Typed English and Chinese copy owned by the Electron shell. */
- 
+ /** Typed shell copy for every shipped language owned by the Electron shell. */
+
  export const en = {
 +  windowMinimize: 'Minimize',
 +  windowMaximize: 'Maximize',
@@ -174,9 +174,9 @@ index 5d9d460..de4b9c3 100644
    cliCommandMenu: 'Manage dsh Command…',
    cliCommandTitle: 'Manage dsh Command',
    cliCommandLocation: 'Desktop command: {path}',
-@@ -172,6 +176,10 @@ export const en = {
+@@ -181,6 +185,10 @@ export const en = {
  export type DesktopMessages = { readonly [Key in keyof typeof en]: string }
- 
+
  export const zh = {
 +  windowMinimize: '最小化',
 +  windowMaximize: '最大化',
@@ -185,21 +185,70 @@ index 5d9d460..de4b9c3 100644
    cliCommandMenu: '管理 dsh 命令…',
    cliCommandTitle: '管理 dsh 命令',
    cliCommandLocation: 'Desktop 命令：{path}',
+@@ -359,6 +367,7 @@ export const zh = {
+
+ /** Japanese copy, checked against the English keys. */
+ export const ja = {
++  ...en,
+   cliCommandMenu: 'dsh コマンドを管理…',
+   cliCommandTitle: 'dsh コマンドを管理',
+   cliCommandLocation: 'デスクトップコマンド: {path}',
+@@ -537,6 +546,7 @@ export const ja = {
+
+ /** Spanish dictionary, checked against the English keys. */
+ export const es = {
++  ...en,
+   cliCommandMenu: 'Administrar el comando dsh…',
+   cliCommandTitle: 'Administrar el comando dsh',
+   cliCommandLocation: 'Comando de escritorio: {path}',
+@@ -715,6 +725,7 @@ export const es = {
+
+ /** French dictionary, checked against the English keys. */
+ export const fr = {
++  ...en,
+   cliCommandMenu: 'Gérer la commande dsh…',
+   cliCommandTitle: 'Gérer la commande dsh',
+   cliCommandLocation: 'Commande de bureau : {path}',
+@@ -893,6 +904,7 @@ export const fr = {
+
+ /** German dictionary, checked against the English keys. */
+ export const de = {
++  ...en,
+   cliCommandMenu: 'dsh-Befehl verwalten…',
+   cliCommandTitle: 'dsh-Befehl verwalten',
+   cliCommandLocation: 'Desktop-Befehl: {path}',
+@@ -1071,6 +1083,7 @@ export const de = {
+
+ /** Russian dictionary, checked against the English keys. */
+ export const ru = {
++  ...en,
+   cliCommandMenu: 'Управление командой dsh…',
+   cliCommandTitle: 'Управление командой dsh',
+   cliCommandLocation: 'Команда Desktop: {path}',
+@@ -1249,6 +1262,7 @@ export const ru = {
+
+ /** Portuguese dictionary, checked against the English keys. */
+ export const pt = {
++  ...en,
+   cliCommandMenu: 'Gerenciar comando dsh…',
+   cliCommandTitle: 'Gerenciar comando dsh',
+   cliCommandLocation: 'Comando da área de trabalho: {path}',
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index 2dfea39..f5ef7f3 100644
+index 1fb6ac48..e0b54fc2 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -1,5 +1,6 @@
+@@ -1,6 +1,7 @@
+ import { installFileActions } from './file-actions.ts'
  import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
  import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 +import { LINUX_CHROME_ARGUMENT, resolveLinuxWindowChrome } from './linux-window.ts'
  /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
- 
- import { readFile, writeFile } from 'node:fs/promises'
-@@ -191,6 +192,16 @@ function chromeFallbackFill(): string {
+
+ import { access, readFile, writeFile } from 'node:fs/promises'
+@@ -244,6 +245,16 @@ function chromeFallbackFill(): string {
    return nativeTheme.shouldUseDarkColors ? '#1b1b1c' : '#f9fafb'
  }
- 
+
 +// Resolved before any window exists, so an unrecognised selection fails at startup instead of
 +// leaving a window with no titlebar and no controls.
 +const linuxChrome = resolveLinuxWindowChrome()
@@ -213,7 +262,7 @@ index 2dfea39..f5ef7f3 100644
  /**
   * Add the effective Desktop palette to a Platform authorization URL so the
   * login page opens in the application's theme. `system` resolves through
-@@ -212,11 +223,17 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+@@ -265,11 +276,17 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
      minWidth: 520,
      minHeight: 600,
      show,
@@ -233,7 +282,7 @@ index 2dfea39..f5ef7f3 100644
      // hiddenInset places traffic lights inside the sidebar; sidebar vibrancy
      // needs a transparent window background to show through the page.
      ...(process.platform === 'darwin' ? {
-@@ -236,13 +253,17 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+@@ -289,13 +306,17 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
        webSecurity: true,
        webviewTag: primary,
        devTools: true,
@@ -248,30 +297,29 @@ index 2dfea39..f5ef7f3 100644
      return { action: 'deny' }
    })
 -  if (process.platform === 'darwin' || process.platform === 'win32') {
-+  if (captionChrome) {
++  if (captionChrome || process.platform === 'darwin') {
      // Fullscreen hides native window controls; overlays drop their caption clearance.
      const sendFullscreen = (): void => {
        if (!window.isDestroyed()) window.webContents.send(DESKTOP_IPC.windowFullscreen, window.isFullScreen())
-@@ -977,7 +998,8 @@ async function main(): Promise<void> {
-     { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
+@@ -1084,7 +1105,7 @@ async function main(): Promise<void> {
+     devToolsF12Shortcut,
    ]
    const refreshApplicationMenu = (): void => {
--    Menu.setApplicationMenu(Menu.buildFromTemplate(process.platform === 'win32' ? devToolsItems : [{
-+    // Caption platforms show Application and Edit in the page's caption, so the native menu bar goes away.
-+    Menu.setApplicationMenu(Menu.buildFromTemplate(captionChrome ? devToolsItems : [{
-       label: darwin ? app.name : currentDesktopLocale().messages.application,
-       submenu: [...applicationItems(), ...devToolsItems],
-     }, ...platformMenus()]))
-@@ -1016,7 +1038,7 @@ async function main(): Promise<void> {
+-    Menu.setApplicationMenu(Menu.buildFromTemplate(process.platform === 'win32'
++    Menu.setApplicationMenu(Menu.buildFromTemplate(captionChrome
+       ? windowsDevToolsShortcuts : [{
+         label: darwin ? app.name : currentDesktopLocale().messages.application,
+         submenu: [...applicationItems(), devToolsF12Shortcut],
+@@ -1124,7 +1145,7 @@ async function main(): Promise<void> {
      ...(process.platform === 'win32' ? { icon: nativeImage.createFromPath(trayIconPath) } : {}),
    })
- 
+
 -  if (process.platform === 'win32') {
 +  if (captionChrome) {
      ipcMain.handle(DESKTOP_IPC.windowsMenu, (event, name: unknown, x: unknown, y: unknown) => {
        assertDesktopSender(event, ['app'])
        if (mainWindow === undefined || event.sender !== mainWindow.webContents
-@@ -1059,8 +1081,26 @@ async function main(): Promise<void> {
+@@ -1165,8 +1186,26 @@ async function main(): Promise<void> {
        // Empty colors precede client stylesheet installation; only CSS color values cross IPC.
        const validColor = (value: unknown): value is string => typeof value === 'string'
          && /^(?:#[\da-f]{3,8}|rgba?\([\d.,%\s]+\))$/iu.test(value)
@@ -297,9 +345,9 @@ index 2dfea39..f5ef7f3 100644
 +      })
 +    }
    }
- 
+
    const hideMainWindow = (window: BrowserWindow): void => {
-@@ -1075,6 +1115,15 @@ async function main(): Promise<void> {
+@@ -1181,6 +1220,15 @@ async function main(): Promise<void> {
    const createMainWindow = (): BrowserWindow => {
      const window = createWindow(appPreload, false, true)
      mainWindow = window
@@ -316,18 +364,18 @@ index 2dfea39..f5ef7f3 100644
      shortcuts.attach(window)
      window.on('focus', automaticCheck)
 diff --git a/apps/desktop/src/preload-app.ts b/apps/desktop/src/preload-app.ts
-index f590b8b..b1614f8 100644
+index 26266b4f..bcb15ee2 100644
 --- a/apps/desktop/src/preload-app.ts
 +++ b/apps/desktop/src/preload-app.ts
-@@ -7,6 +7,7 @@ import { PLATFORM_IPC } from './platform-ipc.ts'
+@@ -8,6 +8,7 @@ import { PLATFORM_IPC } from './platform-ipc.ts'
  import { markDocumentPlatform, syncWindowFullscreen } from './preload-platform.ts'
  import { syncNativeTheme } from './preload-theme.ts'
  import { syncWindowsAppearance } from './preload-windows.ts'
 +import { installLinuxCaption } from './linux-caption.ts'
  import { installMandatoryUpdateOverlay } from './preload-mandatory-overlay.ts'
  import { createDesktopBrowserBridge } from './preload-browser.ts'
- 
-@@ -72,6 +73,7 @@ if (location.protocol === `${SCHEME}:` && location.hostname === 'app') {
+ import type { FileDragHandle } from '@deepseek-ai/dsh-util-file-drag'
+@@ -90,6 +91,7 @@ if (location.protocol === `${SCHEME}:` && location.hostname === 'app') {
      else body.setAttribute('tabindex', previous)
    })
    syncWindowsAppearance()
@@ -336,7 +384,7 @@ index f590b8b..b1614f8 100644
    contextBridge.exposeInMainWorld('__DSH_DIRECTORY_PICKER__', {
      pick: () => ipcRenderer.invoke(DESKTOP_IPC.directoryPick) as Promise<string | null>,
 diff --git a/apps/desktop/src/preload-windows.ts b/apps/desktop/src/preload-windows.ts
-index 5b9ed75..646a645 100644
+index 5b9ed756..646a6451 100644
 --- a/apps/desktop/src/preload-windows.ts
 +++ b/apps/desktop/src/preload-windows.ts
 @@ -1,12 +1,24 @@
@@ -347,7 +395,7 @@ index 5b9ed75..646a645 100644
  import { DESKTOP_IPC } from './ipc.ts'
  import { installWindowsMenu } from './preload-menu.ts'
 +import { linuxWindowChromeArgument } from './linux-window.ts'
- 
+
 -/** Install the Windows-only titlebar marker and observe application language and palette changes. */
 +/**
 + * Whether this document draws the caption instead of the window manager's titlebar.
@@ -367,9 +415,32 @@ index 5b9ed75..646a645 100644
    const mark = (): void => {
      const root = document.documentElement
      root.dataset.windowsTitlebar = ''
+diff --git a/apps/desktop/src/update-overlay.ts b/apps/desktop/src/update-overlay.ts
+index 0de12469..f83fc978 100644
+--- a/apps/desktop/src/update-overlay.ts
++++ b/apps/desktop/src/update-overlay.ts
+@@ -2,6 +2,7 @@
+ import { WebContentsView, type BrowserWindow, type WebContents, type View } from 'electron'
+ import type { EventEmitter } from 'node:events'
+ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
++import { resolveLinuxWindowChrome } from './linux-window.ts'
+
+ /** Main-owned document with no independent native window or activation state. */
+ export interface DesktopUpdateOverlay {
+@@ -48,7 +49,9 @@ export class DesktopUpdateOverlays {
+     input.active++; input.revision++
+     const resize = (): void => {
+       const { width, height } = parent.getContentBounds()
+-      const top = process.platform === 'win32' ? WINDOWS_TITLEBAR_HEIGHT : 0
++      const caption = process.platform === 'win32'
++        || (process.platform === 'linux' && resolveLinuxWindowChrome() !== 'native')
++      const top = caption ? WINDOWS_TITLEBAR_HEIGHT : 0
+       view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) })
+     }
+     const focus = (): void => {
 diff --git a/apps/desktop/tests/linux-window.spec.ts b/apps/desktop/tests/linux-window.spec.ts
 new file mode 100644
-index 0000000..8a7466c
+index 00000000..8a7466cd
 --- /dev/null
 +++ b/apps/desktop/tests/linux-window.spec.ts
 @@ -0,0 +1,41 @@
@@ -414,3 +485,52 @@ index 0000000..8a7466c
 +    expect(linuxWindowChromeArgument([`${LINUX_CHROME_ARGUMENT}unknown`])).toBeUndefined()
 +  })
 +})
+diff --git a/apps/desktop/tests/update-overlay.spec.ts b/apps/desktop/tests/update-overlay.spec.ts
+index bd59d15d..8d0d1394 100644
+--- a/apps/desktop/tests/update-overlay.spec.ts
++++ b/apps/desktop/tests/update-overlay.spec.ts
+@@ -4,7 +4,7 @@ import { DesktopUpdateOverlays } from '../src/update-overlay.ts'
+
+ const native = vi.hoisted(() => ({ create: vi.fn<(options: object) => object>() }))
+ vi.mock('electron', () => ({ WebContentsView: function (options: object) { return native.create(options) } }))
+-afterEach(() => { vi.restoreAllMocks() })
++afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs() })
+ function fixture() {
+   let destroyed = false
+   const parent = Object.assign(new EventEmitter(), {
+@@ -42,9 +42,9 @@ it('never shows or activates its native owner on visibility or background loadin
+   overlay.destroy()
+ })
+
+-it.each(['darwin', 'win32'] as const)('fits inside the owner with native caption clearance on %s', (platform) => {
++it.each(['darwin', 'win32', 'linux'] as const)('fits inside the owner with native caption clearance on %s', (platform) => {
+   vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+-  const f = fixture(); const overlay = f.create(); const top = platform === 'win32' ? 40 : 0
++  const f = fixture(); const overlay = f.create(); const top = platform === 'darwin' ? 0 : 40
+   expect(f.views[0]!.setBounds).toHaveBeenCalledWith({ x: 0, y: top, width: 900, height: 650 - top })
+   f.parent.emit('resize'); expect(f.views[0]!.setBounds).toHaveBeenCalledTimes(2)
+   overlay.destroy()
+@@ -81,3 +81,11 @@ it('closes the view after owner destruction without accessing destroyed native c
+   expect(f.parent.listenerCount('closed')).toBe(0)
+   expect(f.parent.contentView.removeChildView).not.toHaveBeenCalled()
+ })
++
++it('keeps native Linux chrome outside the overlay content area', () => {
++  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
++  vi.stubEnv('DSH_DESKTOP_LINUX_WINDOW_CHROME', 'native')
++  const f = fixture(); const overlay = f.create()
++  expect(f.views[0]!.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 900, height: 650 })
++  overlay.destroy()
++})
+diff --git a/tsconfig.client.json b/tsconfig.client.json
+index 8ef965c8..b09434ad 100644
+--- a/tsconfig.client.json
++++ b/tsconfig.client.json
+@@ -21,6 +21,7 @@
+     "apps/desktop/src/browser-guests.ts",
+     "apps/desktop/src/ipc.ts",
+     "apps/desktop/src/update-overlay.ts",
++    "apps/desktop/src/linux-window.ts",
+     "apps/desktop/src/windows-layout.ts",
+     "apps/desktop/tests/**/*.client.spec.tsx",
+     // Source-subpath test imports can arrive through workspace links whose

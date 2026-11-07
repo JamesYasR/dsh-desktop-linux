@@ -4,7 +4,7 @@ index 7185dc93..4b78fcb7 100644
 +++ b/apps/desktop/.env.linux.example
 @@ -12,10 +12,18 @@ DSH_DESKTOP_LINUX_MAINTAINER="ffyfox <299493445+ffyfox@users.noreply.github.com>
  DSH_DESKTOP_LINUX_HOMEPAGE="https://github.com/deepseek-ai/deepseek-harness"
- 
+
  # The mandatory-update policy channel is Windows and macOS only. The policy service identifies its
 -# Desktop clients as desktop-win or desktop-mac and has no Linux identity, and a Linux release carries
 -# no update channel, so no policy decision could drive an action. A Linux application therefore embeds
@@ -22,7 +22,7 @@ index 7185dc93..4b78fcb7 100644
 +# Publishing a build whose metadata lives in the latest GitHub release:
 +#   DSH_DESKTOP_LINUX_UPDATE_ORIGIN=https://github.com/<owner>/<repo>/releases/latest/download
 +# DSH_DESKTOP_LINUX_UPDATE_ORIGIN=
- 
+
  # Optional npm registry for the bundled dsh runtime install; defaults to https://registry.npmjs.org/.
  # A local mirror such as https://registry.npmmirror.com speeds up repeated local packages.
 diff --git a/apps/desktop/scripts/desktop-linux-update.d.mts b/apps/desktop/scripts/desktop-linux-update.d.mts
@@ -94,7 +94,7 @@ index 00000000..e7d8518e
 +  return { publicUrl: parsed.href.replace(/\/+$/u, ''), channel: 'nightly' }
 +}
 diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
-index 453e18c4..e85d8b3d 100644
+index 1202e11c..f38014a7 100644
 --- a/apps/desktop/scripts/desktop-package-environment.mjs
 +++ b/apps/desktop/scripts/desktop-package-environment.mjs
 @@ -9,6 +9,7 @@ import { resolveDesktopAutoUpdateConfig } from './desktop-auto-update-environmen
@@ -105,36 +105,28 @@ index 453e18c4..e85d8b3d 100644
  import { validateMacOSSignatureCacheDirectory } from './macos-signature-cache-directory.mjs'
  import { resolveMacOSPackageSettings } from './macos-package-settings.mjs'
  import { resolveWindowsSignatureCacheDirectory } from './windows-signature-cache-directory.mjs'
-@@ -18,7 +19,7 @@ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
- const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
- const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY)$/u
- const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
+@@ -19,7 +20,7 @@ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
+ const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_PROD_EO_ZONE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
+ const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY|PACK_CONCURRENCY|COMPRESSION_LEVEL)$/u
+ const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|ZIP_COMPRESSION_LEVEL|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
 -const LINUX_SETTING = /^DSH_DESKTOP_LINUX_(?:MAINTAINER|HOMEPAGE)$/u
 +const LINUX_SETTING = /^DSH_DESKTOP_LINUX_(?:MAINTAINER|HOMEPAGE|UPDATE_ORIGIN)$/u
  const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*|LINUX_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
  const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
- 
-@@ -145,12 +146,13 @@ export function validateDesktopPackageEnvironment(environment, target, options =
-   }
+
+@@ -164,6 +165,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
    if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
    else if (target.platform === 'win32') resolveWindowsPackageSettings(environment)
--  // Linux artifacts carry no signature and no update channel, so this target is always unsigned.
--  // Failing here names the reason instead of surfacing a missing download origin much later.
-+  // Linux artifacts carry no signature, so this target is always unsigned. Its only update channel is
-+  // the optional AppImage feed, resolved here so a malformed address fails before preparation runs.
    if (target.platform === 'linux') {
-     // fpm refuses a Debian or RPM control file without a maintainer and a project URL, and it does so
-     // minutes into the run, after every preparation step has already completed.
-     resolveDesktopLinuxPackageMetadata(environment, resolveDesktopLinuxFormats(environment))
 +    resolveDesktopLinuxUpdateConfig(environment)
-     if (!options.unsigned) {
-       throw new Error('desktop package: Linux artifacts are unsigned; pass --unsigned')
-     }
+     resolveDesktopLinuxPackageMetadata(environment, resolveDesktopLinuxFormats(environment))
+     if (!options.unsigned) throw new Error('desktop package: Linux artifacts are unsigned; pass --unsigned')
+   }
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index 0ca4f04d..76067e01 100644
+index 9ccd02ac..b18d3079 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
-@@ -24,6 +24,7 @@ import { resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
+@@ -25,6 +25,7 @@ import { resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
  import { resolveDesktopBuildVersion } from './desktop-build-version.mjs'
  import { desktopPlatformEmbedsPolicy, resolveDesktopPolicyEnvironment } from './desktop-policy-environment.mjs'
  import { resolveDesktopLinuxFormats, resolveDesktopLinuxPackageMetadata } from './desktop-linux-packages.mjs'
@@ -142,7 +134,7 @@ index 0ca4f04d..76067e01 100644
  import { desktopArtifactOutput, desktopTargetBuildPaths, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
  import { installWindowsDirectoryInstaller } from './windows-directory-installer.mjs'
  import { preserveWindowsRuntimeSignature, signWindowsCode } from './windows-runtime-signature.mjs'
-@@ -101,7 +102,11 @@ export function createElectronBuilderConfig(
+@@ -102,7 +103,11 @@ export function createElectronBuilderConfig(
    if (windowsSigner !== undefined) {
      installWindowsNsisBootstrapSigner({ sign: windowsSigner })
    }

@@ -36,7 +36,7 @@ so reinstall from a newer release instead.
 
 ## Build from source
 
-Node 22.19+ or 24, and pnpm 11.
+The current upstream baseline is `dsh-v0.2.2-rc.1`. Use Node 24.9+ and pnpm 11, which selects the version declared by upstream.
 
 ```bash
 ./scripts/fetch-upstream.sh      # clone upstream into ./upstream
@@ -70,10 +70,10 @@ upstream ref.
 
 ## Patches
 
-18 of them. `0001–0015` (minus the retired `0014`) are the community porting base, from
+18 of them. `0001–0013` (`0014` and `0015` are retired) are the community porting base, from
 [ffyfox/dsh-desktop-linux](https://github.com/ffyfox/dsh-desktop-linux); this repository keeps its
-commit history. `0016–0019` are ours: the in-application update channel, the runtime feed override,
-the cross-platform caption, and the CLI locating its runtime in the unpacked layout. Each patch is
+commit history. `0016–0020` are ours: the in-application update channel, the runtime feed override,
+the cross-platform caption, the CLI locating its runtime in the unpacked layout, and automatic update controls and version rollback. Each patch is
 documented in [patches/README.md](patches/README.md).
 
 ## Known limitations

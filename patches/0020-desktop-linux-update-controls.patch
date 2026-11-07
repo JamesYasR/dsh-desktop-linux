@@ -1,8 +1,8 @@
 diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
-index de4b9c3a..4eaf04df 100644
+index ae352ad4..28d70b1c 100644
 --- a/apps/desktop/src/locale.ts
 +++ b/apps/desktop/src/locale.ts
-@@ -102,6 +102,26 @@ export const en = {
+@@ -107,6 +107,26 @@ export const en = {
    welcomeKeyFailed: 'Could not save the API key. Please try again.',
    welcomeContinueFailed: 'Could not open the workspace. Please try again.',
    checkUpdatesMenu: 'Check for Updates…',
@@ -27,9 +27,9 @@ index de4b9c3a..4eaf04df 100644
 +  rollbackUnlockMenu: 'Unlock Version (pinned to {version})',
 +  rollbackUnlocked: 'Version pin removed. The packaged update feed is active again.',
    reloadPageMenu: 'Reload Page',
+   toggleDevToolsMenu: 'Developer tools',
    restartAppHostMenu: 'Restart App and Host',
-   updateCheckFailedTitle: 'Update Check Failed',
-@@ -277,6 +297,26 @@ export const zh = {
+@@ -291,6 +311,26 @@ export const zh = {
    welcomeKeyFailed: '无法保存 API 密钥，请重试。',
    welcomeContinueFailed: '无法打开工作区，请重试。',
    checkUpdatesMenu: '检查更新…',
@@ -54,21 +54,21 @@ index de4b9c3a..4eaf04df 100644
 +  rollbackUnlockMenu: '解除版本锁定（当前锁定 {version}）',
 +  rollbackUnlocked: '已解除版本锁定，恢复使用产物自带的更新源。',
    reloadPageMenu: '刷新页面',
+   toggleDevToolsMenu: '开发者工具',
    restartAppHostMenu: '重启应用与 Host',
-   updateCheckFailedTitle: '更新检查失败',
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index dbe0f4f4..bdb0b9d7 100644
+index e0b54fc2..734e6c9b 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -4,6 +4,7 @@ import { LINUX_CHROME_ARGUMENT, resolveLinuxWindowChrome } from './linux-window.
+@@ -5,6 +5,7 @@ import { LINUX_CHROME_ARGUMENT, resolveLinuxWindowChrome } from './linux-window.
  /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
- 
- import { readFile, writeFile } from 'node:fs/promises'
+
+ import { access, readFile, writeFile } from 'node:fs/promises'
 +import { readFileSync } from 'node:fs'
  import { join } from 'node:path'
  import { fileURLToPath } from 'node:url'
  import {
-@@ -53,7 +54,18 @@ import { DesktopMandatoryUpdatePolicy, resolveDesktopPolicyConfig, type DesktopP
+@@ -58,7 +59,18 @@ import { DesktopMandatoryUpdatePolicy, resolveDesktopPolicyConfig, type DesktopP
  import { desktopClientMetadata, desktopClientVersion } from './client-metadata.ts'
  import { DesktopMandatoryUpdateWindow } from './mandatory-update-window.ts'
  import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
@@ -85,11 +85,11 @@ index dbe0f4f4..bdb0b9d7 100644
 +  type DesktopRollbackRisk,
 +  type DesktopRollbackVersion,
 +} from './update-rollback.ts'
+ import { readDesktopLocaleCache, writeDesktopLocaleCache } from './locale-cache.ts'
  import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
  import { readDesktopRuntime } from './runtime-tree.ts'
- import { desktopNodeRuntime } from './node-environment.ts'
-@@ -339,6 +351,9 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
- 
+@@ -390,6 +402,9 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+
  async function main(): Promise<void> {
    const desktopSettings = readDesktopSettings(app.getPath('userData'))
 +  // The menu owns these two preferences, so the process keeps its own copy instead of the startup snapshot.
@@ -98,9 +98,9 @@ index dbe0f4f4..bdb0b9d7 100644
    void pruneCrashReports(app.getPath('logs'))
    const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
    const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
-@@ -667,6 +682,14 @@ async function main(): Promise<void> {
+@@ -762,6 +777,14 @@ async function main(): Promise<void> {
    )
- 
+
    const updateSchedule = new DesktopUpdateSchedule(updates, resolveDesktopUpdateScheduleConfig(process.env))
 +  // The packaged feed is both the default source and the feed an unlocked pin returns to.
 +  const packagedUpdateConfig = ((): string | undefined => {
@@ -110,11 +110,11 @@ index dbe0f4f4..bdb0b9d7 100644
 +  // A rollback pins the feed across restarts, so it is applied before the first check can run.
 +  if (pinnedFeedUrl !== undefined) updates.useFeed(pinnedFeedUrl, true)
 +  updateSchedule.setAutomatic(automaticChecks)
- 
+
    const downloadUpdate = async (version: string): Promise<DesktopUpdateState> => {
      void track('desktop_upgrade_click', {})
-@@ -944,7 +967,8 @@ async function main(): Promise<void> {
- 
+@@ -1042,7 +1065,8 @@ async function main(): Promise<void> {
+
    const automaticCheck = (): void => {
      if (!quitting) void mandatoryPolicy?.check('foreground-or-resume').catch((error: unknown) => { console.error(error) })
 -    if (!quitting) void updateSchedule.check().catch((error: unknown) => { console.error(error) })
@@ -123,7 +123,7 @@ index dbe0f4f4..bdb0b9d7 100644
    }
    powerMonitor.on('resume', automaticCheck)
    app.on('will-quit', () => {
-@@ -984,6 +1008,9 @@ async function main(): Promise<void> {
+@@ -1082,6 +1106,9 @@ async function main(): Promise<void> {
        : { label: currentDesktopLocale().messages.aboutMenu, role: 'about' },
      { type: 'separator' },
      { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void openUpdatePrompt(true) } },
@@ -132,10 +132,10 @@ index dbe0f4f4..bdb0b9d7 100644
 +    ...rollbackMenuItems(),
      ...process.platform === 'darwin' || process.platform === 'win32'
        ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
-     ...development ? [
-@@ -1004,6 +1031,109 @@ async function main(): Promise<void> {
+     { type: 'separator' },
+@@ -1104,6 +1131,109 @@ async function main(): Promise<void> {
      { role: 'toggleDevTools', visible: false },
-     { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
+     devToolsF12Shortcut,
    ]
 +  // Published beside the feed; the submenu renders from this snapshot until the process restarts.
 +  let rollbackCatalog: DesktopRollbackCatalog | undefined
@@ -241,9 +241,9 @@ index dbe0f4f4..bdb0b9d7 100644
 +    return items
 +  }
    const refreshApplicationMenu = (): void => {
-     // Caption platforms show Application and Edit in the page's caption, so the native menu bar goes away.
-     Menu.setApplicationMenu(Menu.buildFromTemplate(captionChrome ? devToolsItems : [{
-@@ -1013,6 +1143,21 @@ async function main(): Promise<void> {
+     Menu.setApplicationMenu(Menu.buildFromTemplate(captionChrome
+       ? windowsDevToolsShortcuts : [{
+@@ -1113,6 +1243,21 @@ async function main(): Promise<void> {
      tray?.relabel()
    }
    refreshApplicationMenu()
@@ -276,7 +276,7 @@ index a4bb67b3..0a42686a 100644
 -import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 +import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
  import { join } from 'node:path'
- 
+
  /** Resolved shell preferences; absent fields use the defaults without rewriting existing files. */
  export interface DesktopSettings {
    readonly updates: {
@@ -287,7 +287,7 @@ index a4bb67b3..0a42686a 100644
 +    readonly pinnedFeedUrl?: string
    }
  }
- 
+
 @@ -24,7 +28,7 @@ function record(value: unknown): value is Record<string, unknown> {
  export function readDesktopSettings(userData: string): DesktopSettings {
    const directory = join(userData, 'desktop')
@@ -383,7 +383,7 @@ index 2198bed4..6f6bcbba 100644
 @@ -116,6 +118,24 @@ export class DesktopUpdateCoordinator {
      return result
    }
- 
+
 +  /**
 +   * Point the updater at a feed other than the packaged one.
 +   *
@@ -612,13 +612,13 @@ index 7c08e569..bc8cafbc 100644
    private nextCheck = -Infinity
    private delay: number
 +  private automatic = true
- 
+
    /**
     * @param updates - Coordinator that joins network checks and retains prepared packages.
 @@ -76,6 +77,26 @@ export class DesktopUpdateSchedule {
      return this.pending
    }
- 
+
 +  /**
 +   * Enable or disable the checks this schedule starts on its own.
 +   *
@@ -644,7 +644,7 @@ index 7c08e569..bc8cafbc 100644
      this.disposed = true
 @@ -91,7 +112,8 @@ export class DesktopUpdateSchedule {
    }
- 
+
    private schedule(failed: boolean): void {
 -    if (this.disposed) return
 +    // The Application menu can switch ordinary polling off; explicit checks never come through here.
@@ -652,6 +652,179 @@ index 7c08e569..bc8cafbc 100644
      const { intervalMs, maxBackoffMs, jitter } = this.config
      this.delay = failed ? Math.min(maxBackoffMs, this.delay * 2) : intervalMs
      const lower = Math.max(1_000, this.delay * (1 - jitter))
+diff --git a/apps/desktop/tests/expected/application-menu-en-US.json b/apps/desktop/tests/expected/application-menu-en-US.json
+index 71b281c6..07a658e3 100644
+--- a/apps/desktop/tests/expected/application-menu-en-US.json
++++ b/apps/desktop/tests/expected/application-menu-en-US.json
+@@ -9,6 +9,11 @@
+   {
+     "label": "Check for Updates…"
+   },
++  {
++    "label": "Check for Updates Automatically",
++    "type": "checkbox",
++    "checked": true
++  },
+   {
+     "label": "Manage dsh Command…"
+   },
+diff --git a/apps/desktop/tests/expected/application-menu-zh-CN.json b/apps/desktop/tests/expected/application-menu-zh-CN.json
+index 472aa48a..f1999eff 100644
+--- a/apps/desktop/tests/expected/application-menu-zh-CN.json
++++ b/apps/desktop/tests/expected/application-menu-zh-CN.json
+@@ -9,6 +9,11 @@
+   {
+     "label": "检查更新…"
+   },
++  {
++    "label": "自动检查更新",
++    "type": "checkbox",
++    "checked": true
++  },
+   {
+     "label": "管理 dsh 命令…"
+   },
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index 027192cd..43c8f0f6 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -164,7 +164,7 @@ const harness = await vi.hoisted(async () => {
+       return this.exited.promise
+     })
+     constructor(
+-      readonly node: string, readonly runtime: string, readonly profile: string,
++      readonly node: ConstructorParameters<typeof DesktopHostProcess>[0], readonly runtime: string, readonly profile: string,
+       readonly inspectPort?: number, readonly environment?: NodeJS.ProcessEnv, readonly onFailure?: (error: Error) => void,
+       readonly primaryRuntime?: string,
+       readonly packageManager?: { pnpm: string; nodeBin: string },
+@@ -450,6 +450,8 @@ beforeEach(() => {
+   vi.stubGlobal('process', { ...process, platform: 'win32', arch: 'x64', resourcesPath: 'desktop-test-resources' })
+   vi.stubEnv('DSH_DESKTOP_HOST_INSPECT_PORT', undefined)
+   vi.stubEnv('DSH_DESKTOP_DEV_PROJECT_DIR', undefined)
++  vi.stubEnv('DSH_DESKTOP_LINUX_WINDOW_CHROME', undefined)
++  vi.stubEnv('APPIMAGE', undefined)
+   vi.stubEnv('DSH_DESKTOP_MANDATORY_UPDATE_CONFIG', undefined)
+   vi.stubEnv('DSH_DESKTOP_UPDATE_JOURNAL_DIR', undefined)
+   vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3')
+@@ -564,7 +566,7 @@ describe('desktop main startup', () => {
+     const menu = applicationMenuItems()
+     const visible = menu.filter(item => item.visible !== false)
+     expect(visible.map(item => item.role === 'quit' ? 'quit' : item.label ?? item.type)).toEqual([
+-      messages.aboutMenu, 'separator', messages.checkUpdatesMenu,
++      messages.aboutMenu, 'separator', messages.checkUpdatesMenu, messages.automaticChecksMenu,
+       ...platform === 'linux' ? [] : [messages.cliCommandMenu],
+       'separator', ...packaged ? [] : [messages.reloadPageMenu, messages.restartAppHostMenu],
+       messages.toggleDevToolsMenu, 'separator',
+@@ -574,7 +576,7 @@ describe('desktop main startup', () => {
+     expect(visible.filter(item => item.role === 'toggleDevTools')).toEqual([
+       { role: 'toggleDevTools', label: messages.toggleDevToolsMenu },
+     ])
+-    if (platform === 'win32') {
++    if (platform !== 'darwin') {
+       expect(harness.menu.mock.calls[0]![0]).toEqual([
+         { role: 'toggleDevTools', visible: false },
+         { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
+@@ -590,7 +592,7 @@ describe('desktop main startup', () => {
+     harness.ipcOn.mock.calls.find(([channel]) => channel === DESKTOP_IPC.localeChanged)![1](
+       { sender, senderFrame: sender.mainFrame }, nextLocale,
+     )
+-    const refreshed = platform === 'win32' ? applicationMenuItems()
++    const refreshed = platform !== 'darwin' ? applicationMenuItems()
+       : harness.menu.mock.lastCall![0][0]!.submenu as MenuItemConstructorOptions[]
+     expect(refreshed.filter(item => item.role === 'toggleDevTools' && item.visible !== false)).toEqual([
+       { role: 'toggleDevTools', label: nextLocale === 'en' ? en.toggleDevToolsMenu : zh.toggleDevToolsMenu },
+@@ -891,7 +893,7 @@ describe('desktop main startup', () => {
+     }
+   })
+
+-  it.each(['darwin', 'win32', 'linux'] as const)('limits native titlebar styling to macOS on %s', async (platform) => {
++  it.each(['darwin', 'win32', 'linux'] as const)('keeps vibrancy on macOS and caption overlays on Windows and Linux (%s)', async (platform) => {
+     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+     await import('../src/main.ts')
+     await harness.preparing.promise
+@@ -899,16 +901,13 @@ describe('desktop main startup', () => {
+     expect(window.urls).toEqual(['dsh-app://app/'])
+     if (platform === 'darwin') {
+       expect(window.options).toMatchObject({ titleBarStyle: 'hiddenInset', vibrancy: 'sidebar', backgroundColor: '#00000000' })
+-    } else if (platform === 'win32') {
++    } else {
+       expect(window.options).toMatchObject({ titleBarStyle: 'hidden', titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT } })
+       expect(window.options).not.toHaveProperty('vibrancy')
+       expect(harness.menu.mock.calls[0]![0]).toEqual([
+         { role: 'toggleDevTools', visible: false },
+         { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
+       ])
+-    } else {
+-      expect(window.options).not.toHaveProperty('titleBarStyle')
+-      expect(window.options).not.toHaveProperty('vibrancy')
+     }
+     expect(harness.hosts).toHaveLength(0)
+   })
+@@ -925,7 +924,7 @@ describe('desktop main startup', () => {
+     expect((await handler(new Request('dsh-app://foreign/index.html'))).status).toBe(404)
+   })
+
+-  it.each(['darwin', 'win32'] as const)('relays the %s fullscreen state on transitions and after each load', async (platform) => {
++  it.each(['darwin', 'win32', 'linux'] as const)('relays the %s fullscreen state on transitions and after each load', async (platform) => {
+     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+     await import('../src/main.ts')
+     await harness.preparing.promise
+@@ -948,7 +947,8 @@ describe('desktop main startup', () => {
+     expect(sent()).toHaveLength(relayed)
+   })
+
+-  it.each(['linux'] as const)('registers no fullscreen relay on %s', async (platform) => {
++  it.each(['linux'] as const)('registers no fullscreen relay with native chrome on %s', async (platform) => {
++    vi.stubEnv('DSH_DESKTOP_LINUX_WINDOW_CHROME', 'native')
+     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+     await import('../src/main.ts')
+     await harness.preparing.promise
+@@ -1069,7 +1069,7 @@ describe('desktop main startup', () => {
+     expect(() => handler(event, 'application', NaN, 34)).toThrow('invalid popup request')
+     const application = handler(event, 'application', 48, 34)
+     expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
+-      '关于 DeepSeek Harness', 'separator', '检查更新…', '管理 dsh 命令…', 'separator', zh.toggleDevToolsMenu, 'separator', '退出',
++      '关于 DeepSeek Harness', 'separator', '检查更新…', '自动检查更新', '管理 dsh 命令…', 'separator', zh.toggleDevToolsMenu, 'separator', '退出',
+     ])
+     expect(harness.popup.mock.lastCall![0]).toMatchObject({ window, x: 48, y: 34 })
+     expect(harness.popup.mock.lastCall![0].callback).toBeTypeOf('function')
+@@ -1092,6 +1092,7 @@ describe('desktop main startup', () => {
+   })
+
+   it.each(['darwin', 'linux'] as const)('adds the product File menu and standard window commands only on macOS (%s)', async (platform) => {
++    vi.stubEnv('DSH_DESKTOP_LINUX_WINDOW_CHROME', 'native')
+     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+     await import('../src/main.ts')
+     await harness.preparing.promise
+@@ -1106,8 +1107,8 @@ describe('desktop main startup', () => {
+       : ['Application', 'editMenu'])
+     const application = template[0]!.submenu as MenuItemConstructorOptions[]
+     expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
+-      ? ['about', 'separator', en.checkUpdatesMenu, en.cliCommandMenu, 'separator', 'toggleDevTools', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
+-      : ['about', 'separator', en.checkUpdatesMenu, 'separator', 'toggleDevTools', 'separator', 'quit'])
++      ? ['about', 'separator', en.checkUpdatesMenu, en.automaticChecksMenu, en.cliCommandMenu, 'separator', 'toggleDevTools', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
++      : ['about', 'separator', en.checkUpdatesMenu, en.automaticChecksMenu, 'separator', 'toggleDevTools', 'separator', 'quit'])
+     expect(harness.menu.setApplicationMenu).toHaveBeenCalledOnce()
+   })
+
+@@ -2557,7 +2558,7 @@ describe('desktop main startup', () => {
+     await Promise.all([retry, secondRetry, harness.navigated.promise])
+     expect(harness.applyRelease).toHaveBeenCalledTimes(1)
+     expect(harness.hosts[0]).toMatchObject({
+-      node: process.execPath,
++      node: { executable: process.execPath, electron: true },
+       runtime: join(harness.app.getAppPath(), 'dsh'),
+       primaryRuntime: join('desktop-test-resources', 'runtime', 'primary-runtime'),
+       profile: 'desktop-test-profile',
+@@ -2580,7 +2581,7 @@ describe('desktop main startup', () => {
+     harness.prepared.resolve()
+     await harness.hostStarted.promise
+     const project = join(harness.app.getAppPath(), '.desktop-build', 'development', 'project')
+-    expect(harness.hosts[0]).toMatchObject({ node: process.execPath, runtime: project,
++    expect(harness.hosts[0]).toMatchObject({ node: { executable: process.execPath, electron: true }, runtime: project,
+       primaryRuntime: 'test-primary-runtime', profile: 'desktop-test-profile' })
+     expect(harness.applyRelease).toHaveBeenCalledOnce()
+     harness.hosts[0]!.ready.resolve()
 diff --git a/apps/desktop/tests/settings.spec.ts b/apps/desktop/tests/settings.spec.ts
 index b285bb98..fffb75f0 100644
 --- a/apps/desktop/tests/settings.spec.ts
@@ -662,9 +835,9 @@ index b285bb98..fffb75f0 100644
  import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest'
 -import { readDesktopSettings } from '../src/settings.ts'
 +import { readDesktopSettings, writeDesktopUpdateSettings } from '../src/settings.ts'
- 
+
  vi.mock('node:fs', async importOriginal => ({ ...await importOriginal<typeof import('node:fs')>() }))
- 
+
 @@ -22,8 +22,8 @@ it('creates a discoverable default file on first launch without touching other p
    const { userData, path } = fixture()
    rmSync(join(userData, 'desktop'), { recursive: true })
@@ -675,7 +848,7 @@ index b285bb98..fffb75f0 100644
 +  expect(readFileSync(path, 'utf8')).toBe('{\n  "updates": {\n    "allowTestAuthPopupWindow": false,\n    "automaticChecks": true\n  }\n}\n')
    expect(readFileSync(join(userData, 'keybindings.json'), 'utf8')).toBe('existing shortcuts\n')
  })
- 
+
 @@ -81,3 +81,64 @@ it('continues with defaults even when warning output fails', () => {
    expect(readDesktopSettings(userData).updates.allowTestAuthPopupWindow).toBe(false)
    expect(readFileSync(path, 'utf8')).toBe('{')
@@ -742,7 +915,7 @@ index b285bb98..fffb75f0 100644
 +  expect(fs.statSync(path).mode & 0o777).toBe(0o600)
 +})
 diff --git a/apps/desktop/tests/update-coordinator.spec.ts b/apps/desktop/tests/update-coordinator.spec.ts
-index 1c6e9da1..29f9c652 100644
+index 3aef0bc6..8a17ba02 100644
 --- a/apps/desktop/tests/update-coordinator.spec.ts
 +++ b/apps/desktop/tests/update-coordinator.spec.ts
 @@ -60,16 +60,19 @@ function fixture(channel: 'nightly' | 'latest' = 'nightly', version = '1.1.0-alp
@@ -765,7 +938,7 @@ index 1c6e9da1..29f9c652 100644
 -  return { coordinator, updater, events, states, checkForUpdates, downloadUpdate, quitAndInstall, beforeRestart, downloadResult }
 +  return { coordinator, updater, events, states, checkForUpdates, downloadUpdate, quitAndInstall, setFeedURL, beforeRestart, downloadResult }
  }
- 
+
  describe('desktop update coordinator', () => {
 @@ -257,3 +260,40 @@ it('keeps a stable-version nightly installation on nightly and rejects prereleas
    expect((await latest.coordinator.check()).phase).toBe('error')

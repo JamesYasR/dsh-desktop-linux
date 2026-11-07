@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/tests/desktop-auto-update-environment.spec.ts b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
-index c33a938..f7d4eec 100644
+index 9fbe629c..50770217 100644
 --- a/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 +++ b/apps/desktop/tests/desktop-auto-update-environment.spec.ts
 @@ -107,8 +107,9 @@ describe('desktop auto-update environment', () => {
@@ -12,30 +12,30 @@ index c33a938..f7d4eec 100644
 +    expect(desktopBuildRecordFilename('linux-x64')).toBe('linux-x64-release.json')
 +    expect(() => resolveDesktopAutoUpdateTarget('freebsd', 'x64')).toThrow(/unsupported target/u)
    })
- 
+
    it('uses Nightly metadata for stable and prerelease Desktop versions', () => {
 diff --git a/apps/desktop/tests/desktop-build-paths.spec.ts b/apps/desktop/tests/desktop-build-paths.spec.ts
-index a5e9faf..933beaf 100644
+index f9891ebb..1e9caddf 100644
 --- a/apps/desktop/tests/desktop-build-paths.spec.ts
 +++ b/apps/desktop/tests/desktop-build-paths.spec.ts
 @@ -1,6 +1,7 @@
- import { join, sep } from 'node:path'
+ import { join, resolve, sep } from 'node:path'
  import { describe, expect, it } from 'vitest'
  import {
 +  desktopElectronExecutablePath,
    desktopTargetBuildPaths,
    desktopTargetPlatform,
    developmentRuntimeDirectory,
-@@ -54,7 +55,7 @@ describe('desktop build paths', () => {
+@@ -79,7 +80,7 @@ describe('desktop build paths', () => {
      expect(desktopTargetPlatform('mac-arm64')).toEqual({ platform: 'darwin', arch: 'arm64' })
      expect(desktopTargetPlatform('mac-x64')).toEqual({ platform: 'darwin', arch: 'x64' })
      expect(desktopTargetPlatform('win-x64')).toEqual({ platform: 'win32', arch: 'x64' })
 -    expect(() => desktopTargetPlatform('linux-x64' as 'mac-x64')).toThrow(/unsupported target/u)
 +    expect(desktopTargetPlatform('linux-x64')).toEqual({ platform: 'linux', arch: 'x64' })
    })
- 
+
    it('resolves environment overrides and rejects unsupported targets', () => {
-@@ -63,7 +64,15 @@ describe('desktop build paths', () => {
+@@ -88,7 +89,15 @@ describe('desktop build paths', () => {
        DSH_DESKTOP_TARGET_ARCH: 'x64',
      }, 'darwin', 'arm64')).toBe('mac-x64')
      expect(resolveDesktopBuildTarget({}, 'win32', 'x64')).toBe('win-x64')
@@ -54,12 +54,12 @@ index a5e9faf..933beaf 100644
    })
  })
 diff --git a/apps/desktop/tests/package-target.spec.ts b/apps/desktop/tests/package-target.spec.ts
-index c802f66..4f27143 100644
+index ba647d76..e4f74d02 100644
 --- a/apps/desktop/tests/package-target.spec.ts
 +++ b/apps/desktop/tests/package-target.spec.ts
 @@ -26,7 +26,11 @@ describe('desktop package target', () => {
    })
- 
+
    it('rejects unsupported targets and hosts before building', () => {
 -    expect(() => resolveDesktopPackageTarget('linux-x64', 'linux', 'x64')).toThrow(/unsupported target/u)
 +    expect(resolveDesktopPackageTarget('linux-x64', 'linux', 'x64')).toMatchObject({

@@ -12,14 +12,14 @@
 # 而不是 makepkg 那个起始目录变量名——写了字面量就会被报成 "File referenced in ..."，
 # 让 namcap 出假阳性。精确写法见 scripts/pkgbuild-dir.sh 的注释。
 #
-# 硬性前提：pnpm >= 11。仓库声明 packageManager: pnpm@11.7.0，pnpm 11 会自己切到该版本；
+# 硬性前提：pnpm >= 11。仓库声明 packageManager: pnpm@11.28.5，pnpm 11 会自己切到该版本；
 # pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH。
 
 pkgname=dsh-desktop-linux
-pkgver=0.2.1alpha4
+pkgver=0.2.2rc1
 pkgrel=1
-_tag='dsh-v0.2.1-alpha.4'
-_commit='86a402200d95fecef4529d969836f1fe13c6cb0d'
+_tag='dsh-v0.2.2-rc.1'
+_commit='66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db'
 # GitHub 源码包的顶层目录名 = <repo>-<tag>，tag 自带的 "v" 不剥（实测 dsh-v0.2.1-alpha.1）
 _srcdirname="deepseek-harness-$_tag"
 
@@ -66,8 +66,7 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         '0011-desktop-linux-package-metadata.patch'
         '0012-desktop-build-commit-release-archive.patch'
         '0013-desktop-linux-tray.patch'
-        '0015-desktop-linux-hidden-overlay-reveal.patch'
-        # 0016–0018 是叠加在 0001–0015 之上的（要改的文件已被前面的补丁动过），
+        # 0016–0018 是叠加在 0001–0013 之上的（要改的文件已被前面的补丁动过），
         # 所以必须在它们之后应用。见 patches/README.md。
         '0016-desktop-linux-appimage-update-feed.patch'
         '0017-desktop-linux-runtime-update-feed-override.patch'
@@ -80,26 +79,25 @@ source=("$pkgname-$pkgver.tar.gz::https://github.com/deepseek-ai/deepseek-harnes
         # 补丁系列是文本 diff，装不下托盘 PNG —— GNU patch（makepkg 与 PKGBUILD 都用它）
         # 不支持 git 的二进制补丁。所以这张图作为普通本地 source 平铺过来，由 prepare() 放进源码树。
         'tray-linux.png')
-sha256sums=('290fc4220a4873f720454c12e3aa43d16434d282c48841a3246c739f2ab35637'
-            '0b04d8bf6e9ce6b0ea5245047fa5f5daf88ec1fcacc911924c100a925548c4a8'
+sha256sums=('416750920b64272899259c26b2fa0a4341132c9c19b43337da502ab7ebd599f1'
+            '1b2e1e5eb7c24ad93b56be335bb16798e464853611e34bfc1f6f0d58dc4b2a6f'
             '4989a5cf20ac3c4ab927e7693dd62050f55e51b8e567ea74faa85585a40fe4c7'
-            'fa8aef6245a3a0a97fe6a5ff336b2b227ebbbebed46d5fab24f68d90c18bc3df'
-            'ead23b36d975cbc4f602d48784c099b941dfa91fb0a35a8af5f47247101c2493'
-            '2bc73d363dbfc6de0dc12866a641efd509b007778c10a5df2a113a44a68e7374'
+            'b8a5571dd2b394c40a3c00e9966f90ce46df927e3a26259f64fc9b3910dcf98c'
+            'c384d0abf846961f6e93a13f501809f375a5da99e5b0a0d5328ad162dfcc00a0'
+            '9eaf464804773c89144e8108195d0ba5e7d54b7d71dd169c97eb1420f4c191b0'
             '188c28b94fdd829f6d8cf8748d19d0d152cf9144ef8f3c51c2e5fd651a34507a'
-            'b78a49f2ca34679f78aad141f3d99ee74bec205b60d19b26fe9a1f0e69f88f2b'
-            '45873c109f25ba974ba393c93889fee51ded8b7e3fd9ef32219b14e17984c661'
+            '3163a2c611cb2cd3b2e84e950a21efbbcfa4c9e142ca323fa088b509686518cd'
+            'b9ac5858b146eca8ba2f9364e9b140c47b8ca8db889a1ab0a203945f4b323afd'
             '52e37a49dddbe1831e1d0134dd1818495b9aa329f8b7ca1edd7cc3fa69c39e50'
             '062567a5bcd5f4d8e63368a98927055358318f428c88fb851846d64fb859db8e'
             'a3ff4a524a4ebe28551797bd36dab7b7139516e668462f054e616e8a521e3e8f'
             'd19ea9f506e2d0356a926ad2d20d67bab60511139fafb4e12f338d4d41739715'
             '042117088d416a602985e595e768b2d921e98b64477eaa6a04383a958ae79ba3'
-            '312749e4f22e2aa81a3192dc34a700840fb4c9c4aa2ca727251e086f1a303ad6'
-            '94bb4dd31baa8a3364bc27a280dc83a1c7b8155956517179801917474d4c1c4e'
+            '95bad1e403fe5bef6cc3067533347080dfb4d0060ff153e20a30cfabbe1d9207'
             '90b8c8e41597a92dfbdeba8f9a94c6781e6eca31f092c22623891029ec23ca2b'
-            'cb813b65e76920141c7cc3bd17a27612621e81ef4012c74f9b60ce5616d52c88'
+            '3bcc91d1bfa183abe93e950ce14347ad275441b19784c86704baa29c921456de'
             'a60d44704113c8d5a5b85007fc4d47c7302397d11fff3b9b3633f8f5cfb49bb7'
-            '62eec3c436cd50dbccf6170ce938c030553e2ad5646951d957e440c8211ff9a0'
+            '774796b7f661e3607423a8be0b7cfda14f2c310edb5e4bcb34b7958021dc3bb7'
             'd1153ab7bb1c61ca7f6568b4525f6c3f3c7bf9a9e29af1697f3c02da7dee5322')
 
 prepare() {
@@ -112,8 +110,7 @@ prepare() {
   bsdtar -xf "$srcdir/$pkgname-$pkgver.tar.gz" -C "$srcdir"
   cd "$_srcdirname"
 
-  # 0001–0015 相对同一个基线（$_tag）生成、互相独立；0016/0017 叠加在其上，所以按文件名
-  # 顺序应用即可（顺序在这里是有意义的，不能重排）。
+  # 补丁以 $_tag 为起点按编号叠加，后续补丁可能继续修改同一文件，顺序不能重排。
   local patchfile
   for patchfile in "${source[@]}"; do
     [[ "$patchfile" == *.patch ]] || continue
@@ -145,7 +142,7 @@ build() {
   local pnpm_version
   pnpm_version="$(pnpm --version)"
   if (( ${pnpm_version%%.*} < 11 )); then
-    error "需要 pnpm 11 或更新版本，当前是 $pnpm_version（上游声明 packageManager: pnpm@11.7.0；pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH）"
+    error "需要 pnpm 11 或更新版本，当前是 $pnpm_version（上游声明 packageManager: pnpm@11.28.5；pnpm 9 会报 ERR_PNPM_LOCKFILE_CONFIG_MISMATCH）"
     return 1
   fi
 

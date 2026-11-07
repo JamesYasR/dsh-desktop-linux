@@ -1,5 +1,5 @@
 diff --git a/.gitignore b/.gitignore
-index 3cb86ce8..58b44e9e 100644
+index 4d52487a..abe1a38a 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -2,6 +2,7 @@ CLAUDE.local.md
@@ -50,10 +50,10 @@ index 00000000..7185dc93
 +# DOWNLOAD_PROD_COS_SECRET_ID=
 +# DOWNLOAD_PROD_COS_SECRET_KEY=
 diff --git a/apps/desktop/scripts/desktop-package-environment.d.mts b/apps/desktop/scripts/desktop-package-environment.d.mts
-index 995c117d..48364bdf 100644
+index ec9da721..76c07e5e 100644
 --- a/apps/desktop/scripts/desktop-package-environment.d.mts
 +++ b/apps/desktop/scripts/desktop-package-environment.d.mts
-@@ -17,7 +17,7 @@ export function localMacOSPackageEnvironment(environment?: NodeJS.ProcessEnv): N
+@@ -20,7 +20,7 @@ export function localMacOSPackageEnvironment(environment?: NodeJS.ProcessEnv): N
   * @returns Isolated environment with file-owned release settings.
   */
  export function loadDesktopPackageEnvironment(
@@ -62,7 +62,7 @@ index 995c117d..48364bdf 100644
    environment?: NodeJS.ProcessEnv,
    appRoot?: string,
    options?: { unsigned?: boolean, prepareOnly?: boolean },
-@@ -32,6 +32,6 @@ export function loadDesktopPackageEnvironment(
+@@ -35,6 +35,6 @@ export function loadDesktopPackageEnvironment(
   */
  export function validateDesktopPackageEnvironment(
    environment: NodeJS.ProcessEnv,
@@ -71,7 +71,7 @@ index 995c117d..48364bdf 100644
    options?: { unsigned?: boolean, prepareOnly?: boolean, skipNotarization?: boolean },
  ): void
 diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
-index 8116dea2..453e18c4 100644
+index 27a7f92c..1202e11c 100644
 --- a/apps/desktop/scripts/desktop-package-environment.mjs
 +++ b/apps/desktop/scripts/desktop-package-environment.mjs
 @@ -7,7 +7,8 @@ import { parseEnv } from 'node:util'
@@ -84,44 +84,46 @@ index 8116dea2..453e18c4 100644
  import { validateMacOSSignatureCacheDirectory } from './macos-signature-cache-directory.mjs'
  import { resolveMacOSPackageSettings } from './macos-package-settings.mjs'
  import { resolveWindowsSignatureCacheDirectory } from './windows-signature-cache-directory.mjs'
-@@ -17,7 +18,8 @@ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
- const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
- const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY)$/u
- const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
+@@ -18,7 +19,8 @@ const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
+ const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_PROD_EO_ZONE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
+ const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY|PACK_CONCURRENCY|COMPRESSION_LEVEL)$/u
+ const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|ZIP_COMPRESSION_LEVEL|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
 -const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
 +const LINUX_SETTING = /^DSH_DESKTOP_LINUX_(?:MAINTAINER|HOMEPAGE)$/u
 +const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*|LINUX_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
  const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
- 
+
  /**
-@@ -36,7 +38,7 @@ export function localMacOSPackageEnvironment(environment = process.env) {
- /**
-  * Read a machine preset when selected, otherwise the target's required dotenv; no ambient release fallback.
+@@ -40,7 +42,7 @@ export function localMacOSPackageEnvironment(environment = process.env) {
+  * Any defined Mac ZIP override rejects Windows, including an empty value; nonempty Windows overrides reject macOS.
   * PACKAGE_TEST_RELEASE_ID overrides the test preset only; blank retains its configured ID.
+  * PACKAGE_WINDOWS_COMPRESSION_LEVEL selects 3 or 7 for Windows workflow builds; blank retains the file setting.
 - * @param {'win32' | 'darwin'} platform Target platform.
 + * @param {'win32' | 'darwin' | 'linux'} platform Target platform.
   * @param {NodeJS.ProcessEnv} environment Parent environment, retained only for unrelated build tools.
   * @param {string} appRoot Desktop application directory; relative credential paths resolve here.
   * @param {{ unsigned?: boolean, prepareOnly?: boolean }} options Unsigned presets and Windows preparation-only presets never read signing credentials.
-@@ -44,14 +46,15 @@ export function localMacOSPackageEnvironment(environment = process.env) {
-  */
- export function loadDesktopPackageEnvironment(platform, environment = process.env, appRoot = APP_ROOT, options = {}) {
-   const preset = environment.DSH_PACKAGING_PRESET
+@@ -58,15 +60,15 @@ export function loadDesktopPackageEnvironment(platform, environment = process.en
+     if (platform !== 'darwin') throw new Error('desktop package: PACKAGE_MACOS_ZIP_COMPRESSION_LEVEL requires macOS')
+     if (!['3', '7'].includes(zipCompression)) throw new Error('desktop package: workflow ZIP compression must be 3 or 7')
+   }
+-  const preset = environment.DSH_PACKAGING_PRESET
 -  let path = join(appRoot, platform === 'win32' ? '.env.windows' : '.env.macos')
+-  if (preset !== undefined) {
++  const preset = platform === 'linux' ? undefined : environment.DSH_PACKAGING_PRESET
 +  let path = join(appRoot, platform === 'win32' ? '.env.windows' : platform === 'darwin' ? '.env.macos' : '.env.linux')
-   if (preset !== undefined) {
++  if (preset !== undefined && platform !== 'linux') {
      if (preset !== 'test' && preset !== 'production') throw new Error('desktop package: preset must be test or production')
      const root = environment.DSH_PACKAGING_CONFIG_DIR
      if (!root || !isAbsolute(root)) throw new Error('desktop package: DSH_PACKAGING_CONFIG_DIR must be an absolute directory')
      path = join(root, 'presets', `${preset}.env`)
    }
 -  const platformSetting = platform === 'win32' ? WINDOWS_SETTING : MACOS_SETTING
-+  // Linux artifacts are unsigned, so its file owns package metadata rather than signing settings.
 +  const platformSetting = platform === 'win32' ? WINDOWS_SETTING : platform === 'darwin' ? MACOS_SETTING : LINUX_SETTING
    const publicPlatformSetting = platform === 'win32'
-     ? /^DSH_DESKTOP_WINDOWS_SIGNATURE_CACHE_(?:DIR|CONCURRENCY)$/u
-     : /^DSH_DESKTOP_MACOS_(?:SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|DOWNLOAD_PROXY|NOTARIZATION_PROXY)$/u
-@@ -129,16 +132,29 @@ function requireReadableFile(environment, name) {
+     ? /^DSH_DESKTOP_WINDOWS_(?:SIGNATURE_CACHE_(?:DIR|CONCURRENCY)|PACK_CONCURRENCY|COMPRESSION_LEVEL)$/u
+     : /^DSH_DESKTOP_MACOS_(?:SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|ZIP_COMPRESSION_LEVEL|DOWNLOAD_PROXY|NOTARIZATION_PROXY)$/u
+@@ -148,7 +150,7 @@ function requireReadableFile(environment, name) {
  /**
   * Validate the packaging mode before preparation without invoking a token or Apple's services.
   * @param {NodeJS.ProcessEnv} environment Selected local defaults or file-owned release settings.
@@ -130,31 +132,25 @@ index 8116dea2..453e18c4 100644
   * @param {{ unsigned?: boolean, prepareOnly?: boolean, skipNotarization?: boolean }} options Explicit packaging mode.
   * @returns {void}
   */
- export function validateDesktopPackageEnvironment(environment, target, options = {}) {
+@@ -156,9 +158,15 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+   resolveDesktopTargetBuildPaths(environment, target.platform, target.arch)
    resolveDesktopAppId(environment)
    resolveNpmRegistry(environment)
 -  if (target.platform !== 'darwin' || !options.unsigned) resolveDesktopPolicyEnvironment(environment)
-+  // Linux has no policy service, and an unsigned macOS build has no release channel to police.
 +  if ((target.platform !== 'darwin' || !options.unsigned) && desktopPlatformEmbedsPolicy(target.platform)) {
 +    resolveDesktopPolicyEnvironment(environment)
 +  }
    if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
 -  else resolveWindowsPackageSettings(environment)
 +  else if (target.platform === 'win32') resolveWindowsPackageSettings(environment)
-+  // Linux artifacts carry no signature and no update channel, so this target is always unsigned.
-+  // Failing here names the reason instead of surfacing a missing download origin much later.
 +  if (target.platform === 'linux') {
-+    // fpm refuses a Debian or RPM control file without a maintainer and a project URL, and it does so
-+    // minutes into the run, after every preparation step has already completed.
 +    resolveDesktopLinuxPackageMetadata(environment, resolveDesktopLinuxFormats(environment))
-+    if (!options.unsigned) {
-+      throw new Error('desktop package: Linux artifacts are unsigned; pass --unsigned')
-+    }
++    if (!options.unsigned) throw new Error('desktop package: Linux artifacts are unsigned; pass --unsigned')
 +  }
    if (options.unsigned) return
    if (!options.prepareOnly) resolveDesktopAutoUpdateConfig(environment, target.platform, target.arch)
    if (target.platform === 'win32') {
-@@ -149,7 +165,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+@@ -169,7 +177,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
        keyContainer: environment.DSH_DESKTOP_WINDOWS_KEY_CONTAINER,
      })
      if (!options.prepareOnly) resolveWindowsSignatureCacheDirectory(environment)
@@ -172,13 +168,13 @@ index ff855cfd..a568c806 100644
  import { basename, dirname, join } from 'node:path'
  import { promisify } from 'node:util'
 +import { resolveDesktopLinuxFormats } from './desktop-linux-packages.mjs'
- 
+
  const run = promisify(execFile)
- 
+
 @@ -43,6 +44,16 @@ async function probeTar(): Promise<string | undefined> {
    }
  }
- 
+
 +async function probeRpmbuild(): Promise<string | undefined> {
 +  try {
 +    await run('rpmbuild', ['--version'], { windowsHide: true, timeout: 20_000 })
@@ -217,7 +213,7 @@ index ff855cfd..a568c806 100644
 +  }
    return failures
  }
- 
+
 @@ -92,7 +109,7 @@ export async function probeDesktopToolchain(
   * @returns Resolves when every probe passes.
   */
@@ -228,11 +224,11 @@ index ff855cfd..a568c806 100644
  ): Promise<void> {
    const failures = await probeDesktopToolchain(platform, environment)
 diff --git a/apps/desktop/tests/desktop-package-environment.spec.ts b/apps/desktop/tests/desktop-package-environment.spec.ts
-index 1c3eb02f..9eb1ce17 100644
+index a8d79a2c..59d64e65 100644
 --- a/apps/desktop/tests/desktop-package-environment.spec.ts
 +++ b/apps/desktop/tests/desktop-package-environment.spec.ts
 @@ -7,6 +7,11 @@ import { resolveWindowsPackageSettings } from '../scripts/windows-package-settin
- 
+
  const WINDOWS = { platform: 'win32', arch: 'x64' } as const
  const MACOS = { platform: 'darwin', arch: 'arm64' } as const
 +const LINUX = { platform: 'linux', arch: 'x64' } as const
@@ -243,10 +239,10 @@ index 1c3eb02f..9eb1ce17 100644
  const POLICY = { DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN: 'https://policy.example.com',
    DSH_DESKTOP_MANDATORY_UPDATE_CONFIG: JSON.stringify({ allowedAuthOrigins: ['https://login.example.com'] }) }
  const RELEASE = { ...POLICY, DSH_DESKTOP_APP_ID: 'com.example.desktop', DOWNLOAD_TEST_ORIGIN: 'https://updates.example.com',
-@@ -178,6 +183,45 @@ describe('Desktop local packaging configuration', () => {
+@@ -276,6 +281,45 @@ describe('Desktop local packaging configuration', () => {
      }
    })
- 
+
 +  it('owns the Linux package metadata in the Linux file and keeps ambient values out', async () => {
 +    await withDirectory(async (directory) => {
 +      const parent = { ...LINUX_METADATA, DSH_DESKTOP_LINUX_MAINTAINER: 'stale <stale@example.com>' }

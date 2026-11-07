@@ -1,17 +1,26 @@
 # 补丁
 
-按文件名顺序应用（见 `scripts/apply-patches.sh`），全部相对上游 `86a40220`（tag `dsh-v0.2.1-alpha.4`）。
+按文件名顺序应用（见 `scripts/apply-patches.sh`），当前基线为上游 `66491b05`（tag `dsh-v0.2.2-rc.1`）。
 
-组织约定：**一个文件只属于一个补丁**。每个补丁都是相对同一个基线的独立 diff，
-互不重叠，因此应用顺序无关（仍按编号执行）。补丁由 `git diff -- <files>` 从开发工作树生成；
-两个补丁共用一个文件时（`electron-builder-config.mjs` 属 0003 与 0013，`src/main.ts` 属 0008 与 0013），
-必须按「基线 + 只有这一个补丁」的隔离树取 diff，否则会把另一个补丁的 hunk 一起带进来。
+补丁按编号叠加，同一文件可以被后续补丁继续修改。重做某个补丁时，以「上游基线 + 该编号之前的
+全部补丁」作为起点，再用 `git diff -- <files>` 生成本块的差异，避免混入后续补丁的改动。
 
-已验证（0.2.1-alpha.4）：18 个补丁按序打在完整的上游 release 源码包（tag `dsh-v0.2.1-alpha.4`）上，
+已验证（0.2.2-rc.1）：18 个补丁按序打在上游 `dsh-v0.2.2-rc.1` 上，
 `git apply`（`apply-patches.sh` / CI）与 `patch -Np1`（makepkg 的 `prepare()`）两条路径都全部通过，
-且两条路径产出的树逐字节一致（GNU patch 对叠加补丁会留下 4 个 `.orig` 备份，内容无差异）。
+且两条路径产出的树逐字节一致（比对时排除 GNU patch 生成的 `.orig` 备份）。
 产物层面的验收由 CI 完成：`pnpm install --frozen-lockfile` 与整条打包流水线跑通后发布到滚动 release。
 产物里 `resources/runtime/cli` 不存在，正是 0004 的 Linux 闸门在起作用。
+
+### 0.2.2-rc.1 适配
+
+上游重新组织了 target 映射、共享下载/pnpm 缓存、运行时准备与桌面启动代码。
+`0001`、`0003–0005`、`0007–0008`、`0016`、`0018`、`0020` 已重做，保留新的缓存与 Windows 并行准备流程。
+Linux 的窗口标题栏、独立 Node Host、AppImage 更新、自动更新开关和回滚继续由原补丁负责。
+新增语言保留上游译文，Linux 专有的窗口及更新菜单新增文案在中英文之外使用英文。
+
+`0015` 已删除：上游把更新提示从透明子窗口改成主窗口内的 `WebContentsView`，不再依赖
+`ready-to-show`，原 Wayland 隐藏弹窗修复不再适用。`0018` 为新浮层保留 Linux 自绘标题栏的
+40px 空间，并保留 macOS 原有的全屏状态通知。启动菜单、Host 参数与菜单快照测试随新结构同步更新。
 
 alpha.1 → alpha.2 有 8 个补丁重做（0002 / 0003 / 0004 / 0005 / 0008 / 0009 / 0016，以及被删除的 0014），
 另新增 0019。根因是上游给 unsigned macOS 加了 ad-hoc 签名：删掉了 `--unsigned` 的平台限制、
@@ -95,7 +104,9 @@ alpha.3 → alpha.4 **一个补丁都没重做**：上游改了 831 个文件，
 再把输出的 `resources/tray-linux.png` 拷进 `assets/`（图和 Windows 托盘同源，都是
 `resources/icon-windows.svg`）。
 
-## 让关窗提示在 Wayland 下真的显示出来（0015）
+## 已由上游替代的 Wayland 提示修复（0015）
+
+以下描述历史修复；`0.2.2-rc.1` 已改用 `WebContentsView`，此补丁已移除。
 
 | 补丁 | 覆盖文件 | 内容 |
 |---|---|---|

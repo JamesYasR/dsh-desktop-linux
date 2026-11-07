@@ -1,30 +1,40 @@
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.d.mts b/apps/desktop/scripts/desktop-auto-update-environment.d.mts
-index f656f9ba..2b4549d8 100644
+index 4d42b3dd..87b29dee 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.d.mts
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.d.mts
 @@ -5,7 +5,7 @@ export const DESKTOP_AUTO_UPDATE_ENV: 'DSH_DESKTOP_AUTO_UPDATE_ENV'
  export type DesktopAutoUpdateEnvironment = 'test' | 'production'
- 
+
  /** Directory name of one supported Desktop release target. */
 -export type DesktopAutoUpdateTarget = 'mac-arm64' | 'mac-x64' | 'win-x64'
 +export type DesktopAutoUpdateTarget = 'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64'
- 
- /** Public updater URL and object prefixes for one release target. */
- export interface DesktopAutoUpdateConfig {
+
+ /**
+  * Name the fixed installer object shared by uploading and cache refresh.
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
-index a1973a9c..dd115785 100644
+index 835beadd..227119f1 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
-@@ -33,7 +33,7 @@ const UPDATE_ENVIRONMENTS = {
+@@ -33,15 +33,16 @@ const UPDATE_ENVIRONMENTS = {
    },
  }
- 
+
 -const UPDATE_TARGETS = new Set(['mac-arm64', 'mac-x64', 'win-x64'])
 +const UPDATE_TARGETS = new Set(['mac-arm64', 'mac-x64', 'win-x64', 'linux-x64'])
- 
+
  /**
-  * Resolve the update deployment, defaulting local release work to test.
-@@ -52,7 +52,7 @@ export function resolveDesktopAutoUpdateEnvironment(env) {
+  * Name the fixed installer object shared by uploading and cache refresh.
+- * @param {'mac-arm64' | 'mac-x64' | 'win-x64'} target Supported Desktop target.
++ * @param {'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64'} target Supported Desktop target.
+  * @returns {string} Fixed download filename.
+  */
+ export function desktopLatestInstallerFilename(target) {
+   if (!UPDATE_TARGETS.has(target)) throw new Error(`desktop upload: unsupported target ${target}`)
++  if (target === 'linux-x64') return 'dsh-latest-linux-x64.AppImage'
+   const windows = target === 'win-x64'
+   return `dsh-latest-${windows ? 'windows' : 'macos'}-${target === 'mac-arm64' ? 'arm64' : 'x64'}.${windows ? 'exe' : 'dmg'}`
+ }
+@@ -63,7 +64,7 @@ export function resolveDesktopAutoUpdateEnvironment(env) {
   * Resolve one supported platform and architecture to its update directory.
   * @param {NodeJS.Platform} platform - Target Node.js platform.
   * @param {string} arch - Target Node.js architecture.
@@ -33,8 +43,8 @@ index a1973a9c..dd115785 100644
   */
  export function resolveDesktopAutoUpdateTarget(platform, arch) {
    const os = platform === 'darwin' ? 'mac' : platform === 'win32' ? 'win' : platform
-@@ -65,7 +65,7 @@ export function resolveDesktopAutoUpdateTarget(platform, arch) {
- 
+@@ -76,7 +77,7 @@ export function resolveDesktopAutoUpdateTarget(platform, arch) {
+
  /**
   * Return the local completion record filename for one packaged target.
 - * @param {'mac-arm64' | 'mac-x64' | 'win-x64'} target - Supported release target.
@@ -43,10 +53,10 @@ index a1973a9c..dd115785 100644
   */
  export function desktopBuildRecordFilename(target) {
 diff --git a/apps/desktop/scripts/desktop-build-paths.d.mts b/apps/desktop/scripts/desktop-build-paths.d.mts
-index c7b8173c..4f88250b 100644
+index 910f3032..da063eb5 100644
 --- a/apps/desktop/scripts/desktop-build-paths.d.mts
 +++ b/apps/desktop/scripts/desktop-build-paths.d.mts
-@@ -44,10 +44,17 @@ export function desktopTargetBuildPaths(target: DesktopAutoUpdateTarget): Deskto
+@@ -46,10 +46,17 @@ export function desktopTargetBuildPaths(target: DesktopAutoUpdateTarget, environ
   * @returns Platform and architecture of the prepared payload.
   */
  export function desktopTargetPlatform(target: DesktopAutoUpdateTarget): {
@@ -54,7 +64,7 @@ index c7b8173c..4f88250b 100644
 +  readonly platform: 'darwin' | 'win32' | 'linux'
    readonly arch: 'arm64' | 'x64'
  }
- 
+
 +/**
 + * Return the Electron executable inside one target's extracted distribution.
 + * @param target - Supported Desktop target name.
@@ -66,16 +76,16 @@ index c7b8173c..4f88250b 100644
   * Resolve the paths owned by the target selected in a packaging environment.
   * @param env - Packaging environment.
 diff --git a/apps/desktop/scripts/desktop-build-paths.mjs b/apps/desktop/scripts/desktop-build-paths.mjs
-index e577b1d3..7953a960 100644
+index edfd9cdf..83eae8d5 100644
 --- a/apps/desktop/scripts/desktop-build-paths.mjs
 +++ b/apps/desktop/scripts/desktop-build-paths.mjs
-@@ -4,14 +4,14 @@ import { join, resolve } from 'node:path'
- 
+@@ -4,14 +4,14 @@ import { isAbsolute, join, resolve } from 'node:path'
+
  const APP_ROOT = resolve(import.meta.dirname, '..')
  const BUILD_ROOT = join(APP_ROOT, '.desktop-build')
 -const SUPPORTED_TARGETS = new Set(['mac-arm64', 'mac-x64', 'win-x64'])
 +const SUPPORTED_TARGETS = new Set(['mac-arm64', 'mac-x64', 'win-x64', 'linux-x64'])
- 
+
  /**
   * Resolve the fixed build target selected by a packaging environment.
   * @param {NodeJS.ProcessEnv} env - Packaging environment.
@@ -93,18 +103,18 @@ index e577b1d3..7953a960 100644
 -  return /** @type {'mac-arm64' | 'mac-x64' | 'win-x64'} */ (target)
 +  return /** @type {'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64'} */ (target)
  }
- 
+
  function assertSupportedTarget(target) {
 @@ -37,7 +37,7 @@ function assertSupportedTarget(target) {
- 
+
  /**
   * Return the mutable preparation and artifact directories owned by one release target.
 - * @param {'mac-arm64' | 'mac-x64' | 'win-x64'} target - Supported Desktop target name.
 + * @param {'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64'} target - Supported Desktop target name.
-  * @returns {{ root: string, artifacts: string, unsignedArtifacts: string, unnotarizedArtifacts: string, runtime: string, packageSet: string, dsh: string, dshPnpm: string, electron: string, packedDsh: string, packedVendor: string, packedLandlock: string, downloads: string }} Target paths plus the shared immutable download cache.
+  * @param {NodeJS.ProcessEnv} environment - Packaging environment with an optional absolute cache directory.
+  * @returns {{ root: string, artifacts: string, unsignedArtifacts: string, unnotarizedArtifacts: string, runtime: string, packageSet: string, dsh: string, dshPnpm: string, electron: string, packedDsh: string, packedVendor: string, packedLandlock: string, downloads: string, pnpmStore: string }} Target paths plus shared download and package caches.
   */
- export function desktopTargetBuildPaths(target) {
-@@ -64,17 +64,31 @@ export function desktopTargetBuildPaths(target) {
+@@ -70,8 +70,8 @@ export function desktopTargetBuildPaths(target, environment = process.env) {
  /**
   * Return the platform and architecture of the payload one release target prepares.
   * Windows is prepared as x64 only, so this differs from the build host on an arm64 Windows machine.
@@ -115,17 +125,17 @@ index e577b1d3..7953a960 100644
   */
  export function desktopTargetPlatform(target) {
    assertSupportedTarget(target)
-   return {
--    platform: /** @type {'darwin' | 'win32'} */ (target === 'win-x64' ? 'win32' : 'darwin'),
-+    platform: /** @type {'darwin' | 'win32' | 'linux'} */ (
-+      target === 'win-x64' ? 'win32' : target === 'linux-x64' ? 'linux' : 'darwin'),
-     arch: /** @type {'arm64' | 'x64'} */ (target === 'mac-arm64' ? 'arm64' : 'x64'),
-   }
+@@ -79,10 +79,23 @@ export function desktopTargetPlatform(target) {
+     'mac-arm64': { platform: 'darwin', arch: 'arm64' },
+     'mac-x64': { platform: 'darwin', arch: 'x64' },
+     'win-x64': { platform: 'win32', arch: 'x64' },
++    'linux-x64': { platform: 'linux', arch: 'x64' },
+   })
+   return targets[target]
  }
- 
+
 +/**
 + * Return the Electron executable inside one target's extracted distribution.
-+ * The macOS zip nests the binary in the bundle; the Windows and Linux zips place it at the root.
 + * @param {'mac-arm64' | 'mac-x64' | 'win-x64' | 'linux-x64'} target - Supported Desktop target name.
 + * @returns {string} Path relative to the extracted Electron directory.
 + */
@@ -140,7 +150,7 @@ index e577b1d3..7953a960 100644
   * Resolve the paths owned by the target selected in a packaging environment.
   * @param {NodeJS.ProcessEnv} env - Packaging environment.
 diff --git a/apps/desktop/scripts/desktop-release-store.ts b/apps/desktop/scripts/desktop-release-store.ts
-index 1c9ff239..79f47bd1 100644
+index c080272e..83ec26c4 100644
 --- a/apps/desktop/scripts/desktop-release-store.ts
 +++ b/apps/desktop/scripts/desktop-release-store.ts
 @@ -17,7 +17,7 @@ const sourceSchema = z.strictObject({
@@ -152,3 +162,31 @@ index 1c9ff239..79f47bd1 100644
    preset: z.enum(['test', 'production']),
    productVersion: z.string().min(1),
    version: z.string().min(1),
+diff --git a/snapshots/session/worktree/workspace.expected/.agents/worktrees/.gitignore b/snapshots/session/worktree/workspace.expected/.agents/worktrees/.gitignore
+deleted file mode 100644
+index 72e8ffc0..00000000
+--- a/snapshots/session/worktree/workspace.expected/.agents/worktrees/.gitignore
++++ /dev/null
+@@ -1 +0,0 @@
+-*
+diff --git a/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/result.txt b/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/result.txt
+deleted file mode 100644
+index 01d8ba11..00000000
+--- a/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/result.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-WORKTREE RESULT
+diff --git a/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/tracked.txt b/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/tracked.txt
+deleted file mode 100644
+index 5df2cc1e..00000000
+--- a/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/tracked.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-COMMITTED CONTENT
+diff --git a/snapshots/web/changed-files-turn/workspace.expected/app.local b/snapshots/web/changed-files-turn/workspace.expected/app.local
+deleted file mode 100644
+index 3bf90408..00000000
+--- a/snapshots/web/changed-files-turn/workspace.expected/app.local
++++ /dev/null
+@@ -1 +0,0 @@
+-mode=demo
