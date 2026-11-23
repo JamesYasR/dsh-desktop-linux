@@ -1,11 +1,11 @@
 diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
-index 3b83cea0..2198bed4 100644
+index 475a5606..29734d80 100644
 --- a/apps/desktop/src/update-coordinator.ts
 +++ b/apps/desktop/src/update-coordinator.ts
-@@ -11,6 +11,22 @@ import { DesktopUpdatePreparationError } from './update-error.ts'
- 
+@@ -14,6 +14,22 @@ import { discardDesktopUpdate } from './updates/electron-updater/discard.ts'
+
  const { autoUpdater } = electronUpdater
- 
+
 +/**
 + * Environment variable that points a packaged Linux application at another AppImage update feed.
 + *
@@ -25,7 +25,7 @@ index 3b83cea0..2198bed4 100644
  /** Owns one updater target until its download and installation settle. */
  export class DesktopUpdateCoordinator {
    private current: DesktopUpdateState = { phase: 'idle' }
-@@ -52,12 +68,16 @@ export class DesktopUpdateCoordinator {
+@@ -61,13 +77,17 @@ export class DesktopUpdateCoordinator {
      private readonly publish: (state: DesktopUpdateState) => DesktopUpdateState,
      private readonly beforeRestart: () => Promise<boolean>,
      private readonly updater: AppUpdater = autoUpdater,
@@ -34,7 +34,8 @@ index 3b83cea0..2198bed4 100644
 +      && (existsSync(join(process.resourcesPath, 'app-update.yml')) || linuxUpdateFeedOverride() !== undefined),
      private readonly currentVersion: () => string = () => app.getVersion(),
      private readonly downloadResult?: (success: boolean, reason?: string) => void,
-     private readonly channel: 'nightly' | 'latest' = 'nightly',
+     private channel: DesktopUpdateChannel = 'nightly',
+     private readonly discard: (updater: AppUpdater) => Promise<void> = discardDesktopUpdate,
    ) {
      if (updater === autoUpdater) {
 +      // The packaged feed comes from app-update.yml; an override replaces it for this process only.

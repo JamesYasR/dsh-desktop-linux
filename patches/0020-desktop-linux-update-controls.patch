@@ -1,8 +1,8 @@
 diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
-index ae352ad4..28d70b1c 100644
+index 68376a5b..f52f1206 100644
 --- a/apps/desktop/src/locale.ts
 +++ b/apps/desktop/src/locale.ts
-@@ -107,6 +107,26 @@ export const en = {
+@@ -109,6 +109,26 @@ export const en = {
    welcomeKeyFailed: 'Could not save the API key. Please try again.',
    welcomeContinueFailed: 'Could not open the workspace. Please try again.',
    checkUpdatesMenu: 'Check for Updates…',
@@ -29,7 +29,7 @@ index ae352ad4..28d70b1c 100644
    reloadPageMenu: 'Reload Page',
    toggleDevToolsMenu: 'Developer tools',
    restartAppHostMenu: 'Restart App and Host',
-@@ -291,6 +311,26 @@ export const zh = {
+@@ -308,6 +328,26 @@ export const zh = {
    welcomeKeyFailed: '无法保存 API 密钥，请重试。',
    welcomeContinueFailed: '无法打开工作区，请重试。',
    checkUpdatesMenu: '检查更新…',
@@ -57,18 +57,26 @@ index ae352ad4..28d70b1c 100644
    toggleDevToolsMenu: '开发者工具',
    restartAppHostMenu: '重启应用与 Host',
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
-index e0b54fc2..734e6c9b 100644
+index 12320a31..31800f41 100644
 --- a/apps/desktop/src/main.ts
 +++ b/apps/desktop/src/main.ts
-@@ -5,6 +5,7 @@ import { LINUX_CHROME_ARGUMENT, resolveLinuxWindowChrome } from './linux-window.
- /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
-
+@@ -9,6 +9,7 @@ import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-prod
+ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
+ import { LINUX_CHROME_ARGUMENT, resolveLinuxWindowChrome } from './linux-window.ts'
  import { access, readFile, writeFile } from 'node:fs/promises'
 +import { readFileSync } from 'node:fs'
  import { join } from 'node:path'
  import { fileURLToPath } from 'node:url'
  import {
-@@ -58,7 +59,18 @@ import { DesktopMandatoryUpdatePolicy, resolveDesktopPolicyConfig, type DesktopP
+@@ -21,6 +22,7 @@ import {
+   powerMonitor,
+   nativeImage,
+   nativeTheme,
++  net,
+   protocol,
+   session,
+   shell,
+@@ -62,7 +64,18 @@ import { DesktopMandatoryUpdatePolicy, resolveDesktopPolicyConfig, type DesktopP
  import { desktopClientMetadata, desktopClientVersion } from './client-metadata.ts'
  import { DesktopMandatoryUpdateWindow } from './mandatory-update-window.ts'
  import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
@@ -88,18 +96,18 @@ index e0b54fc2..734e6c9b 100644
  import { readDesktopLocaleCache, writeDesktopLocaleCache } from './locale-cache.ts'
  import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
  import { readDesktopRuntime } from './runtime-tree.ts'
-@@ -390,6 +402,9 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+@@ -403,6 +416,9 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
 
  async function main(): Promise<void> {
-   const desktopSettings = readDesktopSettings(app.getPath('userData'))
+   const desktopSettings = await readDesktopSettings(app.getPath('userData'))
 +  // The menu owns these two preferences, so the process keeps its own copy instead of the startup snapshot.
 +  let automaticChecks = desktopSettings.updates.automaticChecks
 +  let pinnedFeedUrl = desktopSettings.updates.pinnedFeedUrl
    void pruneCrashReports(app.getPath('logs'))
    const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
    const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
-@@ -762,6 +777,14 @@ async function main(): Promise<void> {
-   )
+@@ -797,6 +813,14 @@ async function main(): Promise<void> {
+   }
 
    const updateSchedule = new DesktopUpdateSchedule(updates, resolveDesktopUpdateScheduleConfig(process.env))
 +  // The packaged feed is both the default source and the feed an unlocked pin returns to.
@@ -108,12 +116,12 @@ index e0b54fc2..734e6c9b 100644
 +  })()
 +  const packagedFeedUrl = resolveRollbackOrigin({}, packagedUpdateConfig)
 +  // A rollback pins the feed across restarts, so it is applied before the first check can run.
-+  if (pinnedFeedUrl !== undefined) updates.useFeed(pinnedFeedUrl, true)
++  if (pinnedFeedUrl !== undefined && initialChannel.kind === 'ready') await updates.useFeed(pinnedFeedUrl, true)
 +  updateSchedule.setAutomatic(automaticChecks)
 
-   const downloadUpdate = async (version: string): Promise<DesktopUpdateState> => {
+   const downloadUpdate = async (version: string, revision = updates.revision): Promise<DesktopUpdateState> => {
      void track('desktop_upgrade_click', {})
-@@ -1042,7 +1065,8 @@ async function main(): Promise<void> {
+@@ -1170,7 +1194,8 @@ async function main(): Promise<void> {
 
    const automaticCheck = (): void => {
      if (!quitting) void mandatoryPolicy?.check('foreground-or-resume').catch((error: unknown) => { console.error(error) })
@@ -123,17 +131,17 @@ index e0b54fc2..734e6c9b 100644
    }
    powerMonitor.on('resume', automaticCheck)
    app.on('will-quit', () => {
-@@ -1082,6 +1106,9 @@ async function main(): Promise<void> {
+@@ -1233,6 +1258,9 @@ async function main(): Promise<void> {
        : { label: currentDesktopLocale().messages.aboutMenu, role: 'about' },
      { type: 'separator' },
      { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void openUpdatePrompt(true) } },
 +    { label: currentDesktopLocale().messages.automaticChecksMenu, type: 'checkbox', checked: automaticChecks,
-+      click: item => { setAutomaticChecks(item.checked) } },
++      click: item => { void setAutomaticChecks(item.checked).catch((error: unknown) => { console.error(error) }) } },
 +    ...rollbackMenuItems(),
      ...process.platform === 'darwin' || process.platform === 'win32'
        ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
      { type: 'separator' },
-@@ -1104,6 +1131,109 @@ async function main(): Promise<void> {
+@@ -1255,6 +1283,107 @@ async function main(): Promise<void> {
      { role: 'toggleDevTools', visible: false },
      devToolsF12Shortcut,
    ]
@@ -152,25 +160,22 @@ index e0b54fc2..734e6c9b 100644
 +    }
 +    return keys[risk]
 +  }
-+  const persistUpdatePreferences = (patch: { automaticChecks?: boolean, pinnedFeedUrl?: string | undefined }): void => {
-+    try { writeDesktopUpdateSettings(app.getPath('userData'), patch) } catch (error) {
-+      console.warn('desktop update: could not persist update preferences', error)
-+    }
++  const persistUpdatePreferences = async (patch: { automaticChecks?: boolean, pinnedFeedUrl?: string | undefined }): Promise<void> => {
++    await writeDesktopUpdateSettings(app.getPath('userData'), patch)
 +  }
-+  const setAutomaticChecks = (enabled: boolean): void => {
++  const setAutomaticChecks = async (enabled: boolean): Promise<void> => {
++    await persistUpdatePreferences({ automaticChecks: enabled })
 +    automaticChecks = enabled
-+    persistUpdatePreferences({ automaticChecks: enabled })
 +    updateSchedule.setAutomatic(enabled)
 +    refreshApplicationMenu()
 +  }
-+  const unlockVersion = (): void => {
++  const unlockVersion = async (): Promise<void> => {
++    if (packagedFeedUrl === undefined) throw new Error('desktop update: packaged feed is unavailable')
++    await updates.useFeed(packagedFeedUrl, false, () => persistUpdatePreferences({ pinnedFeedUrl: undefined }))
 +    pinnedFeedUrl = undefined
-+    persistUpdatePreferences({ pinnedFeedUrl: undefined })
-+    if (packagedFeedUrl !== undefined) updates.useFeed(packagedFeedUrl, false)
 +    refreshApplicationMenu()
 +    const messages = currentDesktopLocale().messages
-+    void ordinaryMessageBox({ type: 'info', title: messages.rollbackConfirmTitle, message: messages.rollbackUnlocked })
-+      .catch((error: unknown) => { console.error(error) })
++    await ordinaryMessageBox({ type: 'info', title: messages.rollbackConfirmTitle, message: messages.rollbackUnlocked })
 +  }
 +  const runRollback = async (candidate: DesktopRollbackVersion): Promise<void> => {
 +    const messages = currentDesktopLocale().messages
@@ -195,10 +200,11 @@ index e0b54fc2..734e6c9b 100644
 +    if (answer.response !== 0) return
 +    const previousAutomaticChecks = automaticChecks
 +    // Staying on the older release is the point, so polling stops until the user asks for it again.
-+    setAutomaticChecks(false)
++    await updates.useFeed(candidate.feedUrl, true,
++      () => persistUpdatePreferences({ automaticChecks: false, pinnedFeedUrl: candidate.feedUrl }))
++    automaticChecks = false
++    updateSchedule.setAutomatic(false)
 +    pinnedFeedUrl = candidate.feedUrl
-+    persistUpdatePreferences({ pinnedFeedUrl: candidate.feedUrl })
-+    updates.useFeed(candidate.feedUrl, true)
 +    refreshApplicationMenu()
 +    // Reuse the ordinary flow end to end: check, confirm the download, download, then restart to install.
 +    await openUpdatePrompt(true)
@@ -207,8 +213,8 @@ index e0b54fc2..734e6c9b 100644
 +    // Nothing was downloaded, so the rollback never started: a pin without a rollback would only mislead.
 +    pinnedFeedUrl = undefined
 +    automaticChecks = previousAutomaticChecks
-+    persistUpdatePreferences({ pinnedFeedUrl: undefined, automaticChecks: previousAutomaticChecks })
-+    if (packagedFeedUrl !== undefined) updates.useFeed(packagedFeedUrl, false)
++    await persistUpdatePreferences({ pinnedFeedUrl: undefined, automaticChecks: previousAutomaticChecks })
++    if (packagedFeedUrl !== undefined) await updates.useFeed(packagedFeedUrl, false)
 +    updateSchedule.setAutomatic(previousAutomaticChecks)
 +    refreshApplicationMenu()
 +    const aborted = currentDesktopLocale().messages
@@ -235,7 +241,7 @@ index e0b54fc2..734e6c9b 100644
 +    if (pinnedFeedUrl !== undefined) {
 +      items.push({
 +        label: formatDesktopMessage(messages.rollbackUnlockMenu, { version: pinnedFeedUrl.split('/').pop() ?? pinnedFeedUrl }),
-+        click: () => { unlockVersion() },
++        click: () => { void unlockVersion().catch((error: unknown) => { console.error(error) }) },
 +      })
 +    }
 +    return items
@@ -243,7 +249,7 @@ index e0b54fc2..734e6c9b 100644
    const refreshApplicationMenu = (): void => {
      Menu.setApplicationMenu(Menu.buildFromTemplate(captionChrome
        ? windowsDevToolsShortcuts : [{
-@@ -1113,6 +1243,21 @@ async function main(): Promise<void> {
+@@ -1264,6 +1393,21 @@ async function main(): Promise<void> {
      tray?.relabel()
    }
    refreshApplicationMenu()
@@ -265,122 +271,134 @@ index e0b54fc2..734e6c9b 100644
    // Windows picks a bitmap out of the multi-size ICO by display scale; Linux's StatusNotifierItem host
    // scales the single PNG to the panel's icon size instead.
    const trayIconPath = development
+diff --git a/apps/desktop/src/settings-file.ts b/apps/desktop/src/settings-file.ts
+index 023e2e29..1db3cfd1 100644
+--- a/apps/desktop/src/settings-file.ts
++++ b/apps/desktop/src/settings-file.ts
+@@ -6,12 +6,16 @@ import { z } from 'zod'
+
+ const preferencesSchema = z.object({
+   allowTestAuthPopupWindow: z.boolean(),
++  automaticChecks: z.boolean(),
++  pinnedFeedUrl: z.string().trim().min(1),
+   channel: z.enum(['nightly', 'stable']),
+ })
+ const documentSchema = z.looseObject({ updates: z.looseObject({}).optional() })
+
+ /** Known field values before consumers supply defaults for absent fields. */
+ export type DesktopUpdatePreferences = z.infer<typeof preferencesSchema>
++/** Fields to replace under the shared writer lock; undefined removes a saved pin. */
++export type DesktopUpdatePreferencesPatch = Omit<Partial<DesktopUpdatePreferences>, 'pinnedFeedUrl'> & { pinnedFeedUrl?: string | undefined }
+ /** Unknown root and updates fields survive a read-modify-write operation. */
+ export type DesktopSettingsDocument = z.infer<typeof documentSchema>
+ /** Handling-relevant failure details; validation failures never include document contents. */
+@@ -103,6 +107,8 @@ export class DesktopSettingsFile {
+     return { kind: 'ready', document, fields: {
+       allowTestAuthPopupWindow: field(preferencesSchema.shape.allowTestAuthPopupWindow,
+         document.updates?.allowTestAuthPopupWindow, 'allowTestAuthPopupWindow', this.path),
++      automaticChecks: field(preferencesSchema.shape.automaticChecks, document.updates?.automaticChecks, 'automaticChecks', this.path),
++      pinnedFeedUrl: field(preferencesSchema.shape.pinnedFeedUrl, document.updates?.pinnedFeedUrl, 'pinnedFeedUrl', this.path),
+       channel: field(preferencesSchema.shape.channel, document.updates?.channel, 'channel', this.path),
+     } }
+   }
+@@ -128,12 +134,12 @@ export class DesktopSettingsFile {
+    * @param updates - Typed fields to replace; omitted keys remain unchanged.
+    * @returns After atomic replacement and lock release; otherwise throws DesktopSettingsFileError.
+    */
+-  async saveUpdates(updates: Partial<DesktopUpdatePreferences>): Promise<void> {
++  async saveUpdates(updates: DesktopUpdatePreferencesPatch): Promise<void> {
+     const result = await this.mutate({ kind: 'save', updates })
+     if (result.kind === 'error') throw result.error
+   }
+
+-  private async mutate(request: { kind: 'initialize' } | { kind: 'save'; updates: Partial<DesktopUpdatePreferences> }): Promise<DesktopSettingsRead> {
++  private async mutate(request: { kind: 'initialize' } | { kind: 'save'; updates: DesktopUpdatePreferencesPatch }): Promise<DesktopSettingsRead> {
+     let effect: 'unchanged' | 'unknown' | 'written' = 'unchanged'
+     try {
+       await mkdir(dirname(this.path), { recursive: true, mode: 0o700 })
 diff --git a/apps/desktop/src/settings.ts b/apps/desktop/src/settings.ts
-index a4bb67b3..0a42686a 100644
+index 55521bbc..79714e5b 100644
 --- a/apps/desktop/src/settings.ts
 +++ b/apps/desktop/src/settings.ts
-@@ -2,13 +2,17 @@
-  * Local Electron shell settings, loaded once per process independently of the Host.
-  * Ownership: .agents/notes/implemented/architecture/2026-10-08-desktop-shell-configuration.md.
-  */
--import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
- import { join } from 'node:path'
+@@ -1,26 +1,47 @@
+ /** Startup policy for optional Electron shell preferences, independent of the Host. */
+ import { DesktopSettingsFile, type DesktopUpdatePreferences } from './settings-file.ts'
 
- /** Resolved shell preferences; absent fields use the defaults without rewriting existing files. */
+-/** Resolved popup preference; channel failures do not disable a valid popup preference. */
++/** Resolved shell preferences; invalid fields do not disable unrelated valid preferences. */
  export interface DesktopSettings {
-   readonly updates: {
-     readonly allowTestAuthPopupWindow: boolean
-+    /** Whether the shell polls the feed on its own; the Application menu toggles this. */
-+    readonly automaticChecks: boolean
-+    /** Feed base URL an earlier rollback pinned this installation to, when one was chosen. */
-+    readonly pinnedFeedUrl?: string
-   }
+-  readonly updates: Pick<DesktopUpdatePreferences, 'allowTestAuthPopupWindow'>
++  readonly updates: Pick<DesktopUpdatePreferences, 'allowTestAuthPopupWindow' | 'automaticChecks'>
++    & Partial<Pick<DesktopUpdatePreferences, 'pinnedFeedUrl'>>
  }
 
-@@ -24,7 +28,7 @@ function record(value: unknown): value is Record<string, unknown> {
- export function readDesktopSettings(userData: string): DesktopSettings {
-   const directory = join(userData, 'desktop')
-   const path = join(directory, 'settings.json')
--  const defaults: DesktopSettings = { updates: { allowTestAuthPopupWindow: false } }
-+  const defaults: DesktopSettings = { updates: { allowTestAuthPopupWindow: false, automaticChecks: true } }
-   try {
-     let raw: string
-     try { raw = readFileSync(path, 'utf8') } catch (error) {
-@@ -44,7 +48,19 @@ export function readDesktopSettings(userData: string): DesktopSettings {
-     if (allow !== undefined && typeof allow !== 'boolean') {
-       throw new Error('updates.allowTestAuthPopupWindow must be true or false')
+ /**
+- * Initialize the shared document explicitly at startup, then resolve the popup preference.
++ * Initialize shared settings and resolve absent or invalid shell fields independently.
+  * @param userData - Electron userData, independent of DSH_HOME.
+- * @returns Validated popup preference, or false with a diagnostic on failure; changes require restart.
++ * @returns Popup and polling defaults plus a valid pin, with diagnostics for invalid settings.
+  */
+ export async function readDesktopSettings(userData: string): Promise<DesktopSettings> {
+   const file = new DesktopSettingsFile(userData)
+   const result = await file.initialize()
+-  const preference = result.kind === 'ready' ? result.fields.allowTestAuthPopupWindow : undefined
+-  if (preference?.kind === 'valid') return { updates: { allowTestAuthPopupWindow: preference.value } }
+-  const error = result.kind === 'error' ? result.error : preference?.kind === 'invalid' ? preference.error : undefined
++  const updates: DesktopSettings['updates'] = { allowTestAuthPopupWindow: false, automaticChecks: true }
++  const fields = result.kind === 'ready' ? result.fields : undefined
++  const error = result.kind === 'error' ? result.error
++    : fields === undefined ? undefined
++    : [fields.allowTestAuthPopupWindow, fields.automaticChecks, fields.pinnedFeedUrl].find(field => field.kind === 'invalid')?.error
+   if (error) {
+     try { console.warn(`desktop settings: ${file.path}: using defaults because settings could not be loaded`, error) } catch (_logError) {
+-      // Optional popup settings remain disabled even when diagnostic output is unavailable.
++      // Optional shell preferences remain available when diagnostic output fails.
      }
--    return { updates: { allowTestAuthPopupWindow: allow ?? false } }
-+    const automatic = value.updates?.automaticChecks
-+    if (automatic !== undefined && typeof automatic !== 'boolean') {
-+      throw new Error('updates.automaticChecks must be true or false')
-+    }
-+    const pinned = value.updates?.pinnedFeedUrl
-+    if (pinned !== undefined && (typeof pinned !== 'string' || pinned.trim() === '')) {
-+      throw new Error('updates.pinnedFeedUrl must be a non-empty string')
-+    }
-+    return { updates: {
-+      allowTestAuthPopupWindow: allow ?? false,
-+      automaticChecks: automatic ?? true,
-+      ...(pinned === undefined ? {} : { pinnedFeedUrl: pinned }),
-+    } }
-   } catch (error) {
-     try {
-       console.warn(`desktop settings: ${path}: using defaults because settings could not be loaded`, error)
-@@ -55,3 +71,39 @@ export function readDesktopSettings(userData: string): DesktopSettings {
-     return defaults
    }
- }
+-  return { updates: { allowTestAuthPopupWindow: false } }
++  return { updates: {
++    allowTestAuthPopupWindow: fields?.allowTestAuthPopupWindow.kind === 'valid' ? fields.allowTestAuthPopupWindow.value : updates.allowTestAuthPopupWindow,
++    automaticChecks: fields?.automaticChecks.kind === 'valid' ? fields.automaticChecks.value : updates.automaticChecks,
++    ...(fields?.pinnedFeedUrl.kind === 'valid' ? { pinnedFeedUrl: fields.pinnedFeedUrl.value } : {}),
++  } }
++}
 +
 +/**
-+ * Persist update preferences without disturbing preferences the document owns elsewhere.
-+ *
-+ * The file is replaced atomically so a crash cannot leave half-written settings, and an unreadable or
-+ * invalid document is left untouched instead of being overwritten with defaults.
-+ * @param userData - Electron's userData directory, independent of DSH_HOME.
-+ * @param patch - Update preferences to merge; `undefined` removes a key, which unpins a feed.
-+ * @returns Settings read back from disk after the write.
-+ * @throws {Error} When the existing document cannot be read or parsed, or the write fails.
++ * Save shell update preferences under the same writer lock used by channel settings.
++ * @param userData - Electron userData, independent of DSH_HOME.
++ * @param patch - Fields to replace; undefined removes a pin and omitted keys remain unchanged.
++ * @returns Fresh shell preferences after atomic replacement; invalid documents reject unchanged.
 + */
-+export function writeDesktopUpdateSettings(
++export async function writeDesktopUpdateSettings(
 +  userData: string,
-+  patch: Partial<{ allowTestAuthPopupWindow: boolean, automaticChecks: boolean, pinnedFeedUrl: string | undefined }>,
-+): DesktopSettings {
-+  const directory = join(userData, 'desktop')
-+  const path = join(directory, 'settings.json')
-+  let document: Record<string, unknown> = {}
-+  try {
-+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
-+    if (!record(parsed)) throw new Error('expected a JSON object')
-+    document = { ...parsed }
-+  } catch (error) {
-+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-+      throw new Error(`desktop settings: refusing to overwrite unreadable ${path}`, { cause: error })
-+    }
-+  }
-+  const updates = record(document.updates) ? { ...document.updates } : {}
-+  Object.assign(updates, patch)
-+  document.updates = updates
-+  mkdirSync(directory, { recursive: true, mode: 0o700 })
-+  const temporary = `${path}.tmp`
-+  writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 })
-+  renameSync(temporary, path)
++  patch: Partial<Pick<DesktopUpdatePreferences, 'allowTestAuthPopupWindow' | 'automaticChecks'>> & { pinnedFeedUrl?: string | undefined },
++): Promise<DesktopSettings> {
++  await new DesktopSettingsFile(userData).saveUpdates(patch)
 +  return readDesktopSettings(userData)
-+}
+ }
 diff --git a/apps/desktop/src/update-coordinator.ts b/apps/desktop/src/update-coordinator.ts
-index 2198bed4..6f6bcbba 100644
+index 29734d80..d1948ca5 100644
 --- a/apps/desktop/src/update-coordinator.ts
 +++ b/apps/desktop/src/update-coordinator.ts
 @@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
  import { join } from 'node:path'
  import { app } from 'electron'
- import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater'
+ import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo, type UpdateCheckResult } from 'electron-updater'
 -import { gt, valid } from 'semver'
 +import { eq, gt, valid } from 'semver'
  import type { DesktopUpdateState } from './ipc.ts'
- import { DesktopUpdateHttpExecutor } from './update-http-executor.ts'
- import { DesktopUpdatePreparationError } from './update-error.ts'
-@@ -32,6 +32,8 @@ export class DesktopUpdateCoordinator {
+ import { DesktopUpdateHttpExecutor } from './updates/electron-updater/http-executor.ts'
+ import { DesktopUpdatePreparationError, downloadFailureDetails } from './update-error.ts'
+@@ -34,6 +34,7 @@ function linuxUpdateFeedOverride(): string | undefined {
+ export class DesktopUpdateCoordinator {
    private current: DesktopUpdateState = { phase: 'idle' }
-   private candidate: string | undefined
-   private downloaded = false
-+  /** True while a user-selected rollback feed is active, where an older version is the intended target. */
+   private release: { kind: 'none' } | { kind: 'checked' | 'downloaded' | 'handed-off'; version: string } = { kind: 'none' }
 +  private rollbackFeed = false
    private disposed = false
-   private checkOperation: Promise<DesktopUpdateState> | undefined
-   private downloadOperation: Promise<DesktopUpdateState> | undefined
-@@ -116,6 +118,24 @@ export class DesktopUpdateCoordinator {
+   private generation = 0
+   private switching = 0
+@@ -184,6 +185,47 @@ export class DesktopUpdateCoordinator {
      return result
    }
 
@@ -392,33 +410,52 @@ index 2198bed4..6f6bcbba 100644
 +   * packaged feed and its construction-time settings.
 +   * @param feedUrl - Generic provider base URL used by subsequent checks.
 +   * @param allowDowngrade - Whether an older release served by that feed may be offered.
++   * @param persist - Optional settings save performed before the current target is retired.
++   * @returns After pending operations settle and old resources are retired; installation blocks a switch.
 +   */
-+  useFeed(feedUrl: string, allowDowngrade: boolean): void {
++  useFeed(feedUrl: string, allowDowngrade: boolean, persist: () => Promise<void> = async () => {}): Promise<void> {
 +    this.assertLive()
-+    this.updater.setFeedURL({ provider: 'generic', url: feedUrl, channel: this.channel })
-+    // Assigning a channel re-enables downgrade inside electron-updater, so re-assert both switches after it.
-+    this.updater.allowPrerelease = this.channel === 'nightly'
-+    this.updater.allowDowngrade = allowDowngrade
-+    this.rollbackFeed = allowDowngrade
++    if (this.installOperation !== undefined || this.current.phase === 'installing' || this.release.kind === 'handed-off') {
++      return Promise.reject(new Error('desktop update: installation is in progress'))
++    }
++    this.switching++
++    const operation = this.switchTail.then(async () => {
++      this.assertLive()
++      await persist()
++      this.generation++
++      this.cancellation?.cancel()
++      await Promise.allSettled([this.checkOperation, this.downloadOperation])
++      this.assertLive()
++      this.release = { kind: 'none' }
++      this.cancellation = undefined
++      try { await this.discard(this.updater) } catch (error) {
++        this.suspendConfiguration('desktop update: could not retire the previous update', 'cleanup')
++        throw error
++      }
++      this.updater.setFeedURL({ provider: 'generic', url: feedUrl, channel: this.channel })
++      selectUpdateChannel(this.updater, this.channel)
++      this.updater.allowDowngrade = allowDowngrade
++      this.rollbackFeed = allowDowngrade
++      this.configurationError = undefined
++      this.setState({ phase: 'idle' })
++    }).finally(() => { this.switching-- })
++    this.switchTail = operation.catch(() => { /* The caller reports failure; later selections may retry cleanup. */ })
++    return operation
 +  }
 +
    /**
     * @param version - Version shown in the user's download confirmation.
-    * @returns Download readiness or failure, without authorizing installation.
-@@ -210,7 +230,12 @@ export class DesktopUpdateCoordinator {
+    * @param revision - Revision captured by the download confirmation; omitted uses the current target.
+@@ -296,7 +338,8 @@ export class DesktopUpdateCoordinator {
+       this.cancellation = result.cancellationToken
        const version = result.updateInfo.version
        if (valid(version) === null) throw new Error('desktop update: feed version is invalid')
-       if (this.channel === 'latest' && version.includes('-')) throw new Error('desktop update: latest feed contains a prerelease')
--      this.candidate = result.isUpdateAvailable && gt(version, this.currentVersion()) ? version : undefined
-+      // A rollback feed deliberately serves an older version; the ordinary feed must still move forward.
-+      // electron-updater already reports an older release as available only when downgrades are allowed.
-+      const selectable = this.rollbackFeed
-+        ? !eq(version, this.currentVersion())
-+        : gt(version, this.currentVersion())
-+      this.candidate = result.isUpdateAvailable && selectable ? version : undefined
+-      this.release = result.isUpdateAvailable && gt(version, this.currentVersion())
++      const selectable = this.rollbackFeed ? !eq(version, this.currentVersion()) : gt(version, this.currentVersion())
++      this.release = result.isUpdateAvailable && selectable
+         ? { kind: 'checked', version } : { kind: 'none' }
        return this.setState(this.candidate === undefined ? { phase: 'idle' } : { phase: 'available', version })
      } catch (error) {
-       return this.failure(error, 'check')
 diff --git a/apps/desktop/src/update-rollback.ts b/apps/desktop/src/update-rollback.ts
 new file mode 100644
 index 00000000..4cce1acc
@@ -685,10 +722,10 @@ index 472aa48a..f1999eff 100644
      "label": "管理 dsh 命令…"
    },
 diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
-index 027192cd..43c8f0f6 100644
+index a5f0211c..58f42172 100644
 --- a/apps/desktop/tests/main-startup.spec.ts
 +++ b/apps/desktop/tests/main-startup.spec.ts
-@@ -164,7 +164,7 @@ const harness = await vi.hoisted(async () => {
+@@ -167,7 +167,7 @@ const harness = await vi.hoisted(async () => {
        return this.exited.promise
      })
      constructor(
@@ -697,7 +734,15 @@ index 027192cd..43c8f0f6 100644
        readonly inspectPort?: number, readonly environment?: NodeJS.ProcessEnv, readonly onFailure?: (error: Error) => void,
        readonly primaryRuntime?: string,
        readonly packageManager?: { pnpm: string; nodeBin: string },
-@@ -450,6 +450,8 @@ beforeEach(() => {
+@@ -394,6 +394,7 @@ vi.mock('../src/update-coordinator.ts', () => ({ DesktopUpdateCoordinator: class
+     harness.updateState = { phase: 'idle' }
+     return 'applied' as const
+   }
++  async useFeed(_url: string, _downgrade: boolean, persist: () => Promise<void> = async () => {}) { await persist(); this.revision++; harness.updateState = { phase: 'idle' } }
+   suspendConfiguration(detail: string, reason: 'startup' | 'cleanup' = 'startup') {
+     this.configurationFailure = reason
+     harness.updateState = { phase: 'error', failedOperation: 'configuration', message: detail }
+@@ -481,6 +482,8 @@ beforeEach(() => {
    vi.stubGlobal('process', { ...process, platform: 'win32', arch: 'x64', resourcesPath: 'desktop-test-resources' })
    vi.stubEnv('DSH_DESKTOP_HOST_INSPECT_PORT', undefined)
    vi.stubEnv('DSH_DESKTOP_DEV_PROJECT_DIR', undefined)
@@ -706,7 +751,24 @@ index 027192cd..43c8f0f6 100644
    vi.stubEnv('DSH_DESKTOP_MANDATORY_UPDATE_CONFIG', undefined)
    vi.stubEnv('DSH_DESKTOP_UPDATE_JOURNAL_DIR', undefined)
    vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3')
-@@ -564,7 +566,7 @@ describe('desktop main startup', () => {
+@@ -595,11 +598,14 @@ describe('desktop main startup', () => {
+     expect(harness.updateInstall).toHaveBeenCalledWith('1.0.1', 0)
+   })
+
+-  it('keeps startup channel errors visible and recovers after a valid UI selection', async () => {
++  it.each([undefined, 'https://example.test/archive'])('keeps startup channel errors visible with pin %s and recovers after a valid UI selection', async (pinnedFeedUrl) => {
+     configureTestAuthPopup(false)
+     const path = join(harness.app.getPath('userData'), 'desktop', 'settings.json')
+-    writeFileSync(path, JSON.stringify({ updates: { channel: 'unknown' } }))
++    writeFileSync(path, JSON.stringify({ updates: { channel: 'unknown', pinnedFeedUrl } }))
++    const { DesktopUpdateCoordinator } = await import('../src/update-coordinator.ts')
++    const feed = vi.spyOn(DesktopUpdateCoordinator.prototype, 'useFeed')
+     await readyForUpdate()
++    expect(feed).not.toHaveBeenCalled()
+     expect(await invoke(DESKTOP_IPC.updatesChannelGet, 'app')).toMatchObject({ channel: null, error: 'channel' })
+     expect(harness.hosts).toHaveLength(1)
+     expect(await invoke(DESKTOP_IPC.updatesChannelSet, 'app', 'stable')).toEqual({ kind: 'applied', state: { channel: 'stable', packagedChannel: 'nightly', changing: false } })
+@@ -822,7 +828,7 @@ describe('desktop main startup', () => {
      const menu = applicationMenuItems()
      const visible = menu.filter(item => item.visible !== false)
      expect(visible.map(item => item.role === 'quit' ? 'quit' : item.label ?? item.type)).toEqual([
@@ -715,7 +777,7 @@ index 027192cd..43c8f0f6 100644
        ...platform === 'linux' ? [] : [messages.cliCommandMenu],
        'separator', ...packaged ? [] : [messages.reloadPageMenu, messages.restartAppHostMenu],
        messages.toggleDevToolsMenu, 'separator',
-@@ -574,7 +576,7 @@ describe('desktop main startup', () => {
+@@ -832,7 +838,7 @@ describe('desktop main startup', () => {
      expect(visible.filter(item => item.role === 'toggleDevTools')).toEqual([
        { role: 'toggleDevTools', label: messages.toggleDevToolsMenu },
      ])
@@ -724,7 +786,7 @@ index 027192cd..43c8f0f6 100644
        expect(harness.menu.mock.calls[0]![0]).toEqual([
          { role: 'toggleDevTools', visible: false },
          { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
-@@ -590,7 +592,7 @@ describe('desktop main startup', () => {
+@@ -848,7 +854,7 @@ describe('desktop main startup', () => {
      harness.ipcOn.mock.calls.find(([channel]) => channel === DESKTOP_IPC.localeChanged)![1](
        { sender, senderFrame: sender.mainFrame }, nextLocale,
      )
@@ -733,7 +795,7 @@ index 027192cd..43c8f0f6 100644
        : harness.menu.mock.lastCall![0][0]!.submenu as MenuItemConstructorOptions[]
      expect(refreshed.filter(item => item.role === 'toggleDevTools' && item.visible !== false)).toEqual([
        { role: 'toggleDevTools', label: nextLocale === 'en' ? en.toggleDevToolsMenu : zh.toggleDevToolsMenu },
-@@ -891,7 +893,7 @@ describe('desktop main startup', () => {
+@@ -1149,7 +1155,7 @@ describe('desktop main startup', () => {
      }
    })
 
@@ -742,7 +804,7 @@ index 027192cd..43c8f0f6 100644
      vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
      await import('../src/main.ts')
      await harness.preparing.promise
-@@ -899,16 +901,13 @@ describe('desktop main startup', () => {
+@@ -1157,17 +1163,13 @@ describe('desktop main startup', () => {
      expect(window.urls).toEqual(['dsh-app://app/'])
      if (platform === 'darwin') {
        expect(window.options).toMatchObject({ titleBarStyle: 'hiddenInset', vibrancy: 'sidebar', backgroundColor: '#00000000' })
@@ -755,12 +817,13 @@ index 027192cd..43c8f0f6 100644
          { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
        ])
 -    } else {
+-      expect(window.options).not.toHaveProperty('backgroundColor')
 -      expect(window.options).not.toHaveProperty('titleBarStyle')
 -      expect(window.options).not.toHaveProperty('vibrancy')
      }
      expect(harness.hosts).toHaveLength(0)
    })
-@@ -925,7 +924,7 @@ describe('desktop main startup', () => {
+@@ -1248,7 +1250,7 @@ describe('desktop main startup', () => {
      expect((await handler(new Request('dsh-app://foreign/index.html'))).status).toBe(404)
    })
 
@@ -769,7 +832,7 @@ index 027192cd..43c8f0f6 100644
      vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
      await import('../src/main.ts')
      await harness.preparing.promise
-@@ -948,7 +947,8 @@ describe('desktop main startup', () => {
+@@ -1271,7 +1273,8 @@ describe('desktop main startup', () => {
      expect(sent()).toHaveLength(relayed)
    })
 
@@ -779,7 +842,7 @@ index 027192cd..43c8f0f6 100644
      vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
      await import('../src/main.ts')
      await harness.preparing.promise
-@@ -1069,7 +1069,7 @@ describe('desktop main startup', () => {
+@@ -1392,7 +1395,7 @@ describe('desktop main startup', () => {
      expect(() => handler(event, 'application', NaN, 34)).toThrow('invalid popup request')
      const application = handler(event, 'application', 48, 34)
      expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
@@ -788,16 +851,18 @@ index 027192cd..43c8f0f6 100644
      ])
      expect(harness.popup.mock.lastCall![0]).toMatchObject({ window, x: 48, y: 34 })
      expect(harness.popup.mock.lastCall![0].callback).toBeTypeOf('function')
-@@ -1092,6 +1092,7 @@ describe('desktop main startup', () => {
+@@ -1414,7 +1417,8 @@ describe('desktop main startup', () => {
+     await edit
    })
 
-   it.each(['darwin', 'linux'] as const)('adds the product File menu and standard window commands only on macOS (%s)', async (platform) => {
+-  it.each(['darwin', 'linux'] as const)('declares the platform application menus, with the product File, Edit, and Window menus on macOS (%s)', async (platform) => {
++  it.each(['darwin', 'linux'] as const)('adds the product File menu and standard window commands only on macOS (%s)', async (platform) => {
 +    vi.stubEnv('DSH_DESKTOP_LINUX_WINDOW_CHROME', 'native')
      vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
      await import('../src/main.ts')
      await harness.preparing.promise
-@@ -1106,8 +1107,8 @@ describe('desktop main startup', () => {
-       : ['Application', 'editMenu'])
+@@ -1440,8 +1444,8 @@ describe('desktop main startup', () => {
+       : undefined)
      const application = template[0]!.submenu as MenuItemConstructorOptions[]
      expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
 -      ? ['about', 'separator', en.checkUpdatesMenu, en.cliCommandMenu, 'separator', 'toggleDevTools', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
@@ -807,7 +872,7 @@ index 027192cd..43c8f0f6 100644
      expect(harness.menu.setApplicationMenu).toHaveBeenCalledOnce()
    })
 
-@@ -2557,7 +2558,7 @@ describe('desktop main startup', () => {
+@@ -2998,7 +3002,7 @@ describe('desktop main startup', () => {
      await Promise.all([retry, secondRetry, harness.navigated.promise])
      expect(harness.applyRelease).toHaveBeenCalledTimes(1)
      expect(harness.hosts[0]).toMatchObject({
@@ -816,7 +881,7 @@ index 027192cd..43c8f0f6 100644
        runtime: join(harness.app.getAppPath(), 'dsh'),
        primaryRuntime: join('desktop-test-resources', 'runtime', 'primary-runtime'),
        profile: 'desktop-test-profile',
-@@ -2580,7 +2581,7 @@ describe('desktop main startup', () => {
+@@ -3021,7 +3025,7 @@ describe('desktop main startup', () => {
      harness.prepared.resolve()
      await harness.hostStarted.promise
      const project = join(harness.app.getAppPath(), '.desktop-build', 'development', 'project')
@@ -826,39 +891,38 @@ index 027192cd..43c8f0f6 100644
      expect(harness.applyRelease).toHaveBeenCalledOnce()
      harness.hosts[0]!.ready.resolve()
 diff --git a/apps/desktop/tests/settings.spec.ts b/apps/desktop/tests/settings.spec.ts
-index b285bb98..fffb75f0 100644
+index 0a0fec8c..a5d36197 100644
 --- a/apps/desktop/tests/settings.spec.ts
 +++ b/apps/desktop/tests/settings.spec.ts
-@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
+@@ -4,7 +4,8 @@ import * as fsp from 'node:fs/promises'
  import { tmpdir } from 'node:os'
  import { join } from 'node:path'
  import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest'
 -import { readDesktopSettings } from '../src/settings.ts'
 +import { readDesktopSettings, writeDesktopUpdateSettings } from '../src/settings.ts'
++import { DesktopUpdateSettings } from '../src/update-settings.ts'
 
- vi.mock('node:fs', async importOriginal => ({ ...await importOriginal<typeof import('node:fs')>() }))
+ vi.mock('node:fs/promises', async importOriginal => ({ ...await importOriginal<typeof import('node:fs/promises')>() }))
 
-@@ -22,8 +22,8 @@ it('creates a discoverable default file on first launch without touching other p
+@@ -23,7 +24,7 @@ it('creates a discoverable default file on first launch without touching other p
    const { userData, path } = fixture()
    rmSync(join(userData, 'desktop'), { recursive: true })
    writeFileSync(join(userData, 'keybindings.json'), 'existing shortcuts\n')
--  expect(readDesktopSettings(userData)).toEqual({ updates: { allowTestAuthPopupWindow: false } })
--  expect(readFileSync(path, 'utf8')).toBe('{\n  "updates": {\n    "allowTestAuthPopupWindow": false\n  }\n}\n')
-+  expect(readDesktopSettings(userData)).toEqual({ updates: { allowTestAuthPopupWindow: false, automaticChecks: true } })
-+  expect(readFileSync(path, 'utf8')).toBe('{\n  "updates": {\n    "allowTestAuthPopupWindow": false,\n    "automaticChecks": true\n  }\n}\n')
+-  expect(await readDesktopSettings(userData)).toEqual({ updates: { allowTestAuthPopupWindow: false } })
++  expect(await readDesktopSettings(userData)).toEqual({ updates: { allowTestAuthPopupWindow: false, automaticChecks: true } })
+   expect(readFileSync(path, 'utf8')).toBe('{\n  "updates": {\n    "allowTestAuthPopupWindow": false\n  }\n}\n')
    expect(readFileSync(join(userData, 'keybindings.json'), 'utf8')).toBe('existing shortcuts\n')
  })
-
-@@ -81,3 +81,64 @@ it('continues with defaults even when warning output fails', () => {
-   expect(readDesktopSettings(userData).updates.allowTestAuthPopupWindow).toBe(false)
+@@ -82,3 +83,78 @@ it('continues with defaults even when warning output fails', async () => {
+   expect((await readDesktopSettings(userData)).updates.allowTestAuthPopupWindow).toBe(false)
    expect(readFileSync(path, 'utf8')).toBe('{')
  })
 +
-+it('reads an automatic-check opt-out and a feed pin without rewriting the document', () => {
++it('reads an automatic-check opt-out and a feed pin without rewriting the document', async () => {
 +  const { userData, path } = fixture()
 +  const raw = '{"updates":{"automaticChecks":false,"pinnedFeedUrl":"https://example.test/feed"}}'
 +  writeFileSync(path, raw)
-+  const settings = readDesktopSettings(userData)
++  const settings = await readDesktopSettings(userData)
 +  expect(settings.updates.automaticChecks).toBe(false)
 +  expect(settings.updates.pinnedFeedUrl).toBe('https://example.test/feed')
 +  expect(readFileSync(path, 'utf8')).toBe(raw)
@@ -866,20 +930,20 @@ index b285bb98..fffb75f0 100644
 +
 +it.each(['{"updates":{"automaticChecks":"false"}}', '{"updates":{"automaticChecks":1}}',
 +  '{"updates":{"pinnedFeedUrl":""}}', '{"updates":{"pinnedFeedUrl":42}}'])(
-+'reports an invalid update preference and keeps the file: %s', (raw) => {
++'reports an invalid update preference and keeps the file: %s', async (raw) => {
 +  const { userData, path } = fixture()
 +  writeFileSync(path, raw)
-+  const settings = readDesktopSettings(userData)
++  const settings = await readDesktopSettings(userData)
 +  expect(settings.updates.automaticChecks).toBe(true)
 +  expect(settings.updates.pinnedFeedUrl).toBeUndefined()
 +  expect(console.warn).toHaveBeenCalledWith(expect.stringContaining(path), expect.any(Error))
 +  expect(readFileSync(path, 'utf8')).toBe(raw)
 +})
 +
-+it('writes one preference while preserving unrelated keys and other preferences', () => {
++it('writes one preference while preserving unrelated keys and other preferences', async () => {
 +  const { userData, path } = fixture()
 +  writeFileSync(path, JSON.stringify({ updates: { allowTestAuthPopupWindow: true }, custom: 'preserve' }))
-+  const settings = writeDesktopUpdateSettings(userData, { automaticChecks: false, pinnedFeedUrl: 'https://example.test/feed' })
++  const settings = await writeDesktopUpdateSettings(userData, { automaticChecks: false, pinnedFeedUrl: 'https://example.test/feed' })
 +  expect(settings.updates).toEqual({
 +    allowTestAuthPopupWindow: true, automaticChecks: false, pinnedFeedUrl: 'https://example.test/feed',
 +  })
@@ -890,35 +954,49 @@ index b285bb98..fffb75f0 100644
 +  expect(fs.statSync(path).mode & 0o777).toBe(0o600)
 +})
 +
-+it('removes a feed pin when the patch sets it to undefined', () => {
++it('removes a feed pin when the patch sets it to undefined', async () => {
 +  const { userData, path } = fixture()
 +  writeFileSync(path, '{"updates":{"automaticChecks":true,"pinnedFeedUrl":"https://example.test/feed"}}')
-+  const settings = writeDesktopUpdateSettings(userData, { pinnedFeedUrl: undefined })
++  const settings = await writeDesktopUpdateSettings(userData, { pinnedFeedUrl: undefined })
 +  expect(settings.updates.pinnedFeedUrl).toBeUndefined()
 +  expect(JSON.parse(readFileSync(path, 'utf8')).updates).toEqual({ automaticChecks: true })
 +})
 +
-+it('refuses to overwrite a document it cannot parse', () => {
++it('refuses to overwrite a document it cannot parse', async () => {
 +  const { userData, path } = fixture()
 +  writeFileSync(path, '{')
-+  expect(() => writeDesktopUpdateSettings(userData, { automaticChecks: false })).toThrow(/refusing to overwrite/u)
++  await expect(writeDesktopUpdateSettings(userData, { automaticChecks: false })).rejects.toThrow(/desktop settings/u)
 +  expect(readFileSync(path, 'utf8')).toBe('{')
 +})
 +
-+it('creates the update preference document when none exists', () => {
++it('creates the update preference document when none exists', async () => {
 +  const { userData, path } = fixture()
 +  rmSync(join(userData, 'desktop'), { recursive: true })
-+  const settings = writeDesktopUpdateSettings(userData, { automaticChecks: false })
++  const settings = await writeDesktopUpdateSettings(userData, { automaticChecks: false })
 +  expect(settings.updates).toEqual({ allowTestAuthPopupWindow: false, automaticChecks: false })
 +  // Only the written preference is persisted; the absent one keeps its read-time default.
 +  expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ updates: { automaticChecks: false } })
 +  expect(fs.statSync(path).mode & 0o777).toBe(0o600)
 +})
++
++it('preserves both channel and rollback preferences when their saves overlap', async () => {
++  const { userData, path } = fixture()
++  writeFileSync(path, JSON.stringify({ custom: 'preserve', updates: { channel: 'nightly' } }))
++  await Promise.all([
++    new DesktopUpdateSettings(userData, 'nightly').save('stable'),
++    writeDesktopUpdateSettings(userData, { automaticChecks: false, pinnedFeedUrl: 'https://example.test/archive' }),
++  ])
++  expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ custom: 'preserve', updates: {
++    channel: 'stable', automaticChecks: false, pinnedFeedUrl: 'https://example.test/archive',
++  } })
++  await writeDesktopUpdateSettings(userData, { pinnedFeedUrl: undefined })
++  expect(JSON.parse(readFileSync(path, 'utf8')).updates).toEqual({ channel: 'stable', automaticChecks: false })
++})
 diff --git a/apps/desktop/tests/update-coordinator.spec.ts b/apps/desktop/tests/update-coordinator.spec.ts
-index 3aef0bc6..8a17ba02 100644
+index b65f825b..f1b2e5a3 100644
 --- a/apps/desktop/tests/update-coordinator.spec.ts
 +++ b/apps/desktop/tests/update-coordinator.spec.ts
-@@ -60,16 +60,19 @@ function fixture(channel: 'nightly' | 'latest' = 'nightly', version = '1.1.0-alp
+@@ -60,16 +60,19 @@ function fixture(channel: 'nightly' | 'stable' = 'nightly', version = '1.1.0-alp
      return ['verified-package']
    })
    const quitAndInstall = vi.fn()
@@ -932,7 +1010,7 @@ index 3aef0bc6..8a17ba02 100644
 +  }) as unknown as AppUpdater
    const coordinator = new DesktopUpdateCoordinator(
      (state) => { states.push(state); return state },
-     beforeRestart, updater, () => true, () => version, downloadResult, channel,
+     beforeRestart, updater, () => true, () => version, downloadResult, channel, discard,
    )
    coordinators.push(coordinator)
 -  return { coordinator, updater, events, states, checkForUpdates, downloadUpdate, quitAndInstall, beforeRestart, downloadResult }
@@ -940,18 +1018,52 @@ index 3aef0bc6..8a17ba02 100644
  }
 
  describe('desktop update coordinator', () => {
-@@ -257,3 +260,40 @@ it('keeps a stable-version nightly installation on nightly and rejects prereleas
-   expect((await latest.coordinator.check()).phase).toBe('error')
-   expect(latest.downloadUpdate).not.toHaveBeenCalled()
+@@ -449,3 +452,74 @@ it('does not diagnose a filesystem cause from error wording alone', async () =>
+   f.downloadUpdate.mockRejectedValueOnce(new Error('ENOSPC or EACCES in a remote response'))
+   expect((await f.coordinator.download('1.1.0-rc.2')).downloadFailure).toBeUndefined()
  })
 +
 +describe('user-selected rollback feeds', () => {
++  it('retires a downloaded target and invalidates its confirmation before changing feeds', async () => {
++    const discard = vi.fn(async () => {})
++    const f = fixture('nightly', '1.1.0-alpha.1', discard)
++    await f.coordinator.check()
++    await f.coordinator.download('1.1.0-rc.2')
++    const revision = f.coordinator.revision
++    await f.coordinator.useFeed('https://example.test/archive', true)
++    expect(discard).toHaveBeenCalledWith(f.updater)
++    expect(f.coordinator.state).toEqual({ phase: 'idle' })
++    await f.coordinator.install('1.1.0-rc.2', revision)
++    expect(f.quitAndInstall).not.toHaveBeenCalled()
++  })
++
++  it('keeps the old target when saving the version pin fails', async () => {
++    const discard = vi.fn(async () => {})
++    const f = fixture('nightly', '1.1.0-alpha.1', discard)
++    await f.coordinator.check()
++    const state = f.coordinator.state
++    await expect(f.coordinator.useFeed('https://example.test/archive', true,
++      async () => { throw new Error('settings read-only') })).rejects.toThrow('settings read-only')
++    expect(f.coordinator.state).toBe(state)
++    expect(f.setFeedURL).not.toHaveBeenCalled()
++    expect(discard).not.toHaveBeenCalled()
++  })
++
++  it('refuses feed changes after handing an installation to the updater', async () => {
++    const f = fixture()
++    await f.coordinator.check()
++    await f.coordinator.download('1.1.0-rc.2')
++    await f.coordinator.install('1.1.0-rc.2')
++    await expect(f.coordinator.useFeed('https://example.test/archive', true)).rejects.toThrow('installation is in progress')
++    expect(f.setFeedURL).not.toHaveBeenCalled()
++  })
++
 +  it('offers an older release only after a rollback feed is selected', async () => {
 +    const f = fixture('nightly', '1.1.0-alpha.1')
 +    f.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: '1.0.0' } })
 +    // The ordinary feed must keep moving forward, so an older release stays a non-candidate.
 +    expect(await f.coordinator.check()).toMatchObject({ phase: 'idle' })
-+    f.coordinator.useFeed('https://example.test/archive', true)
++    await f.coordinator.useFeed('https://example.test/archive', true)
 +    expect(f.setFeedURL).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://example.test/archive' }))
 +    expect(f.updater.allowDowngrade).toBe(true)
 +    expect(await f.coordinator.check()).toEqual({ phase: 'available', version: '1.0.0' })
@@ -960,7 +1072,7 @@ index 3aef0bc6..8a17ba02 100644
 +  it('downloads and installs that older release through the ordinary path', async () => {
 +    const f = fixture('nightly', '1.1.0-alpha.1')
 +    f.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: '1.0.0' } })
-+    f.coordinator.useFeed('https://example.test/archive', true)
++    await f.coordinator.useFeed('https://example.test/archive', true)
 +    expect((await f.coordinator.check()).phase).toBe('available')
 +    // The fixture reports its own version on completion; this download targets the older release.
 +    f.downloadUpdate.mockImplementationOnce(async () => {
@@ -975,8 +1087,8 @@ index 3aef0bc6..8a17ba02 100644
 +  it('returns to forward-only updates when the packaged feed is restored', async () => {
 +    const f = fixture('nightly', '1.1.0-alpha.1')
 +    f.checkForUpdates.mockResolvedValue({ isUpdateAvailable: true, updateInfo: { version: '1.0.0' } })
-+    f.coordinator.useFeed('https://example.test/archive', true)
-+    f.coordinator.useFeed('https://example.test/feed', false)
++    await f.coordinator.useFeed('https://example.test/archive', true)
++    await f.coordinator.useFeed('https://example.test/feed', false)
 +    expect(f.updater.allowDowngrade).toBe(false)
 +    expect(await f.coordinator.check()).toMatchObject({ phase: 'idle' })
 +  })

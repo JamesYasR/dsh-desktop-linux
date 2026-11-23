@@ -36,7 +36,7 @@ so reinstall from a newer release instead.
 
 ## Build from source
 
-The current upstream baseline is `dsh-v0.2.2-rc.1`. Use Node 24.9+ and pnpm 11, which selects the version declared by upstream.
+The current upstream baseline is `dsh-v0.2.2-rc.5`; the same patch set supports `0.2.2-rc.3`, `rc.4`, and `rc.5`. Use Node 24.9+ and pnpm 11, which selects the version declared by upstream.
 
 ```bash
 ./scripts/fetch-upstream.sh      # clone upstream into ./upstream
@@ -49,7 +49,7 @@ patches, dependencies, or types:
 
 ```bash
 ./scripts/preflight.sh           # PKGBUILD self-consistency + both patch routes compared byte-for-byte + host typecheck on the patched tree
-./scripts/preflight.sh --full    # adds CI's build:lib (tsdown included; slow, tens of minutes)
+./scripts/preflight.sh --full    # adds CI's complete build (including Web and aggregate checks)
 ./scripts/preflight.sh --clean    # remove upstream/ afterwards (node_modules and all, ~2.4G)
 ```
 

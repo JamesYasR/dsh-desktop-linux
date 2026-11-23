@@ -1,18 +1,18 @@
 diff --git a/apps/desktop-host/src/cli.ts b/apps/desktop-host/src/cli.ts
-index 6c890f89..336b3a72 100644
+index 10757b7a..2314875a 100644
 --- a/apps/desktop-host/src/cli.ts
 +++ b/apps/desktop-host/src/cli.ts
 @@ -1,5 +1,6 @@
  /** Public dsh commands using the immutable runtime carried by the Desktop installation. */
- 
+
 +import { existsSync } from 'node:fs'
- import { delimiter, dirname, join, resolve } from 'node:path'
+ import { basename, delimiter, dirname, join, resolve } from 'node:path'
  import { runCli } from '@deepseek-ai/dsh/lib/bin.js'
- import { installOfficeEngineResolution, runtimeArchivePath } from './office-engine.ts'
-@@ -26,11 +27,27 @@ export async function runDesktopCli(runtimeDir: string, supportDir: string): Pro
+
+@@ -33,11 +34,27 @@ export async function runDesktopCli(supportDir: string): Promise<void> {
    })
  }
- 
+
 +/**
 + * Locate the support runtime that carries the payload's package manager and Node launcher. Its directory
 + * sits beside the payload in a build tree (`<target>/dsh` and `<target>/runtime`), beside the archive in a
@@ -35,6 +35,6 @@ index 6c890f89..336b3a72 100644
      await installWindowsCliSignals()
    }
    const runtimeDir = resolve(import.meta.dirname, '../../../..')
--  await runDesktopCli(runtimeDir, join(dirname(runtimeArchivePath(runtimeDir) ?? runtimeDir), 'runtime'))
-+  await runDesktopCli(runtimeDir, resolveSupportDir(runtimeDir))
+-  await runDesktopCli(join(dirname(runtimeArchivePath(runtimeDir) ?? runtimeDir), 'runtime'))
++  await runDesktopCli(resolveSupportDir(runtimeDir))
  }

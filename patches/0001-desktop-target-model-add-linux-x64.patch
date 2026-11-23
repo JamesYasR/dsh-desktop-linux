@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.d.mts b/apps/desktop/scripts/desktop-auto-update-environment.d.mts
-index 4d42b3dd..87b29dee 100644
+index c58df5a0..f85721d2 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.d.mts
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.d.mts
 @@ -5,7 +5,7 @@ export const DESKTOP_AUTO_UPDATE_ENV: 'DSH_DESKTOP_AUTO_UPDATE_ENV'
@@ -12,7 +12,7 @@ index 4d42b3dd..87b29dee 100644
  /**
   * Name the fixed installer object shared by uploading and cache refresh.
 diff --git a/apps/desktop/scripts/desktop-auto-update-environment.mjs b/apps/desktop/scripts/desktop-auto-update-environment.mjs
-index 835beadd..227119f1 100644
+index 24aaa0ea..d0b7162d 100644
 --- a/apps/desktop/scripts/desktop-auto-update-environment.mjs
 +++ b/apps/desktop/scripts/desktop-auto-update-environment.mjs
 @@ -33,15 +33,16 @@ const UPDATE_ENVIRONMENTS = {
@@ -34,7 +34,7 @@ index 835beadd..227119f1 100644
    const windows = target === 'win-x64'
    return `dsh-latest-${windows ? 'windows' : 'macos'}-${target === 'mac-arm64' ? 'arm64' : 'x64'}.${windows ? 'exe' : 'dmg'}`
  }
-@@ -63,7 +64,7 @@ export function resolveDesktopAutoUpdateEnvironment(env) {
+@@ -72,7 +73,7 @@ export function resolveDesktopAutoUpdateEnvironment(env) {
   * Resolve one supported platform and architecture to its update directory.
   * @param {NodeJS.Platform} platform - Target Node.js platform.
   * @param {string} arch - Target Node.js architecture.
@@ -43,7 +43,7 @@ index 835beadd..227119f1 100644
   */
  export function resolveDesktopAutoUpdateTarget(platform, arch) {
    const os = platform === 'darwin' ? 'mac' : platform === 'win32' ? 'win' : platform
-@@ -76,7 +77,7 @@ export function resolveDesktopAutoUpdateTarget(platform, arch) {
+@@ -85,7 +86,7 @@ export function resolveDesktopAutoUpdateTarget(platform, arch) {
 
  /**
   * Return the local completion record filename for one packaged target.
@@ -150,11 +150,11 @@ index edfd9cdf..83eae8d5 100644
   * Resolve the paths owned by the target selected in a packaging environment.
   * @param {NodeJS.ProcessEnv} env - Packaging environment.
 diff --git a/apps/desktop/scripts/desktop-release-store.ts b/apps/desktop/scripts/desktop-release-store.ts
-index c080272e..83ec26c4 100644
+index eb9d5457..37798609 100644
 --- a/apps/desktop/scripts/desktop-release-store.ts
 +++ b/apps/desktop/scripts/desktop-release-store.ts
 @@ -17,7 +17,7 @@ const sourceSchema = z.strictObject({
-   channel: z.enum(['nightly', 'latest']),
+   channel: z.enum(['nightly', 'stable']),
    runnerName: z.string().min(1),
    // Storage accepts every Desktop target; CI routing separately limits currently provisioned platforms.
 -  target: z.enum(['mac-arm64', 'mac-x64', 'win-x64']),
@@ -162,31 +162,16 @@ index c080272e..83ec26c4 100644
    preset: z.enum(['test', 'production']),
    productVersion: z.string().min(1),
    version: z.string().min(1),
-diff --git a/snapshots/session/worktree/workspace.expected/.agents/worktrees/.gitignore b/snapshots/session/worktree/workspace.expected/.agents/worktrees/.gitignore
-deleted file mode 100644
-index 72e8ffc0..00000000
---- a/snapshots/session/worktree/workspace.expected/.agents/worktrees/.gitignore
-+++ /dev/null
-@@ -1 +0,0 @@
--*
-diff --git a/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/result.txt b/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/result.txt
-deleted file mode 100644
-index 01d8ba11..00000000
---- a/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/result.txt
-+++ /dev/null
-@@ -1 +0,0 @@
--WORKTREE RESULT
-diff --git a/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/tracked.txt b/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/tracked.txt
-deleted file mode 100644
-index 5df2cc1e..00000000
---- a/snapshots/session/worktree/workspace.expected/.agents/worktrees/isolated/tracked.txt
-+++ /dev/null
-@@ -1 +0,0 @@
--COMMITTED CONTENT
-diff --git a/snapshots/web/changed-files-turn/workspace.expected/app.local b/snapshots/web/changed-files-turn/workspace.expected/app.local
-deleted file mode 100644
-index 3bf90408..00000000
---- a/snapshots/web/changed-files-turn/workspace.expected/app.local
-+++ /dev/null
-@@ -1 +0,0 @@
--mode=demo
+diff --git a/apps/desktop/scripts/retain-desktop-ci.ts b/apps/desktop/scripts/retain-desktop-ci.ts
+index e6722749..3711a47d 100644
+--- a/apps/desktop/scripts/retain-desktop-ci.ts
++++ b/apps/desktop/scripts/retain-desktop-ci.ts
+@@ -36,7 +36,7 @@ export function resolveDesktopRetentionRunner(env: NodeJS.ProcessEnv): string {
+   const target = resolveDesktopBuildTarget(env)
+   const routes = desktopPublishRunnersSchema.parse(JSON.parse(required(env, 'DESKTOP_PUBLISH_RUNNERS')))
+   const route = routes[required(env, 'RUNNER_NAME')]
+-  if (!route || !route.target.includes(target)
++  if (!route || !route.target.some(candidate => candidate === target)
+     || new Set(Object.values(routes).map(item => item.label)).size !== Object.keys(routes).length) {
+     throw new Error('desktop retention: original machine requires a unique artifact routing label')
+   }

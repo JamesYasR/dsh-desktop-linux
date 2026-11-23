@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 推之前的本地预检：把 CI 会因为「补丁/依赖/类型」失败的事先在本机跑一遍。
 #
-#   ./scripts/preflight.sh                     # 上游 ref 取最新的 dsh-v* tag
+#   ./scripts/preflight.sh                     # 上游 ref 取最新 RC / 正式版 tag
 #   ./scripts/preflight.sh dsh-v0.2.1-alpha.2   # 指定 ref
-#   ./scripts/preflight.sh --full              # 额外跑 CI 同款 build:lib（含 tsdown，很慢）
+#   ./scripts/preflight.sh --full              # 额外跑 CI 同款完整构建（含 Web 与聚合检查）
 #   ./scripts/preflight.sh --no-install        # 复用已有的 upstream/node_modules，跳过安装
 #   ./scripts/preflight.sh --clean             # 跑完删掉 upstream/（含 node_modules，约 2.4G）
 #
@@ -14,11 +14,11 @@
 #   2. 两条路径打同一套补丁：git apply（CI 用）与 GNU patch（makepkg 用），
 #      并逐字节比对两条路径产出的树（README 里那条验收标准的机器版本）
 #   3. pnpm install --frozen-lockfile
-#   4. 类型检查：默认只跑 CI 会先跑到的 host 面（tsc -b tsconfig.host.json）；
-#      --full 时连 client 面与 tsdown 一起跑
+#   4. 类型检查：先生成 Typert 和 host 声明，再检查 host 聚合程序；
+#      --full 时跑 unsigned 打包使用的完整 local 构建
 #
-# 为什么 host 面单独跑就够当默认：CI 的 build:lib 是 host 先、client 后，而 client 面依赖
-# host 面跑完 tsdown 才会生成的中间产物——只跑 client 的 tsc 会报一堆假错（remote-mock 的
+# 为什么 host 面单独跑就够当默认：构建先准备 host 声明，而 client 面依赖
+# host 面生成的中间产物——只跑 client 的 tsc 会报一堆假错（remote-mock 的
 # TypertRemoteNamespaceMap 就是这样）。所以默认只跑 host，要全链就 --full。
 #
 # 退出后 ./upstream 保留在「已打过补丁」的状态（下次跑只增量安装，第 4 步的类型检查也就有东西可查）；
@@ -115,10 +115,10 @@ done
 note "源码包缓存：${PREFLIGHT_CACHE:-${TMPDIR:-/tmp}}/（可用 PREFLIGHT_CACHE= 指定目录复用）"
 
 # ---------------------------------------------------------------- 1. 拉上游
-step "1/4 拉上游 ${REF:-最新 dsh-v* tag}"
+step "1/4 拉上游 ${REF:-最新 RC / 正式版 tag}"
 if [[ -z "$REF" ]]; then
   REF="$(git ls-remote --tags --refs https://github.com/deepseek-ai/deepseek-harness.git 'dsh-v*' \
-    | awk -F/ '{print $NF}' | sort -V | tail -1)"
+    | awk -F/ '{print $NF}' | python3 "$ROOT/scripts/latest-upstream-release.py")"
 fi
 if [[ -z "$REF" ]]; then
   bad "无法确定上游 ref（网络不通？）"
@@ -201,23 +201,23 @@ fi
 
 # ---------------------------------------------------------------- 3. 安装依赖
 step "3/4 pnpm install --frozen-lockfile"
+PNPM=(pnpm)
+if ! command -v pnpm >/dev/null 2>&1; then
+  # 没有系统 pnpm 时退回桌面应用自带的那个（本机可能只剩应用在跑）。
+  bundled="$(ls -t /tmp/.mount_*/resources/runtime/pnpm/bin/pnpm.mjs 2>/dev/null | head -1 || true)"
+  if [[ -n "$bundled" ]] && command -v node >/dev/null 2>&1; then
+    PNPM=(node "$bundled")
+    note "用应用自带的 pnpm：$bundled"
+  else
+    bad "找不到 pnpm（也没找到应用自带的 ${bundled:-pnpm.mjs}）"
+    PNPM=()
+  fi
+fi
 if [[ -z "$REF" ]]; then
   note "跳过（上游树不可用）"
 elif (( DO_INSTALL == 0 )); then
   note "跳过（--no-install）"
 else
-  PNPM=(pnpm)
-  if ! command -v pnpm >/dev/null 2>&1; then
-    # 没有系统 pnpm 时退回桌面应用自带的那个（本机可能只剩应用在跑）。
-    bundled="$(ls -t /tmp/.mount_*/resources/runtime/pnpm/bin/pnpm.mjs 2>/dev/null | head -1 || true)"
-    if [[ -n "$bundled" ]] && command -v node >/dev/null 2>&1; then
-      PNPM=(node "$bundled")
-      note "用应用自带的 pnpm：$bundled"
-    else
-      bad "找不到 pnpm（也没找到应用自带的 ${bundled:-pnpm.mjs}）"
-      PNPM=()
-    fi
-  fi
   if (( ${#PNPM[@]} > 0 )); then
     if (cd "$UPSTREAM" && "${PNPM[@]}" install --frozen-lockfile >/tmp/preflight-install.log 2>&1); then
       ok "依赖就绪（$(du -sh "$UPSTREAM/node_modules" | cut -f1)）"
@@ -229,23 +229,25 @@ fi
 
 # ---------------------------------------------------------------- 4. 类型检查
 step "4/4 类型检查"
-if [[ ! -d "$UPSTREAM/node_modules/typescript" ]]; then
-  note "跳过（没有 node_modules；先去掉 --no-install 跑一次）"
+if (( ${#PNPM[@]} == 0 )); then
+  bad "无法类型检查：找不到 pnpm"
+elif [[ ! -d "$UPSTREAM/node_modules/typescript" ]]; then
+  bad "无法类型检查：没有 TypeScript 依赖；先去掉 --no-install 跑一次"
 elif (( FULL == 1 )); then
-  note "--full：跑 CI 同款 build:lib（含 tsdown，慢，可能十几分钟）"
-  if (cd "$UPSTREAM" && "${PNPM[@]}" run build:lib:host >/tmp/preflight-tsc.log 2>&1 \
-      && "${PNPM[@]}" run build:lib:client >>/tmp/preflight-tsc.log 2>&1); then
-    ok "build:lib:host + build:lib:client 通过，日志 /tmp/preflight-tsc.log"
+  note "--full：跑 unsigned 打包同款完整构建（local profile）"
+  if (cd "$UPSTREAM" && "${PNPM[@]}" run build --profile local >/tmp/preflight-tsc.log 2>&1); then
+    ok "完整构建通过，日志 /tmp/preflight-tsc.log"
   else
-    bad "build:lib 失败，见 /tmp/preflight-tsc.log（尾部如下）"
+    bad "完整构建失败，见 /tmp/preflight-tsc.log（尾部如下）"
     tail -15 /tmp/preflight-tsc.log | sed 's/^/      /' >&2 || true
   fi
 else
-  if (cd "$UPSTREAM" && node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -b tsconfig.host.json \
-      >/tmp/preflight-tsc.log 2>&1); then
-    ok "tsc -b tsconfig.host.json 通过"
+  if (cd "$UPSTREAM" && "${PNPM[@]}" exec tsx scripts/compile-referenced-projects.ts host-contracts \
+      >/tmp/preflight-tsc.log 2>&1 \
+      && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc -p tsconfig.host.json >>/tmp/preflight-tsc.log 2>&1); then
+    ok "host 声明生成与聚合类型检查通过"
   else
-    bad "tsc -b tsconfig.host.json 失败，见 /tmp/preflight-tsc.log（尾部如下）"
+    bad "host 类型检查失败，见 /tmp/preflight-tsc.log（尾部如下）"
     tail -15 /tmp/preflight-tsc.log | sed 's/^/      /' >&2 || true
   fi
   note "没跑 client 面与 tsdown；要全链加 --full"

@@ -86,16 +86,22 @@ desktop_host_port() {
   return 1
 }
 
-# 当前基线的版本：PKGBUILD 的 _tag 去掉 "dsh-v" 前缀（dsh-v0.2.1-alpha.2 → 0.2.1-alpha.2）。产物文件名、
-# 打包后的 package.json 用的都是这个版本。
+# 当前选择的构建版本：显式构建版本优先，其次为检出源码的版本，最后才回退到 PKGBUILD 基线。
+# 手动构建其他 RC 时不能仍按 PKGBUILD 的默认 tag 验收；重发版本也可能有日期与序号后缀。
 #
 # 为什么需要它：只跑了 build.sh --dir 时，$OUT 里还留着上一版基线的 AppImage/deb/rpm，原先的静态
 # 检查对它们照样 PASS——验的其实是旧产物（2026-09-29 实测踩到：0.2.0-rc.1 的验证里有三条 PASS 是
 # 9 月 26 日那份 0.1.7-rc.2 的包）。旧版本一律 skip 而不是 bad，因为 --dir 之后本来就没有新的
 # AppImage/deb/rpm，那是正常状态，只有「拿旧产物当通过」才是缺陷。
-EXPECTED_VERSION="$(bash -c 'source "$1" >/dev/null 2>&1; printf %s "${_tag:-}"' _ "$ROOT/PKGBUILD" | sed 's/^dsh-v//')"
+EXPECTED_VERSION="${DSH_DESKTOP_BUILD_VERSION:-}"
+if [[ -z "$EXPECTED_VERSION" && -n "$NODE" && -f "$UPSTREAM/apps/desktop/package.json" ]]; then
+  EXPECTED_VERSION="$("$NODE" -p 'require(process.argv[1]).version' "$UPSTREAM/apps/desktop/package.json" 2>/dev/null || true)"
+fi
 if [[ -z "$EXPECTED_VERSION" ]]; then
-  echo "错误：从 $ROOT/PKGBUILD 读不到 _tag，无法判断产物版本" >&2
+  EXPECTED_VERSION="$(bash -c 'source "$1" >/dev/null 2>&1; printf %s "${_tag:-}"' _ "$ROOT/PKGBUILD" | sed 's/^dsh-v//')"
+fi
+if [[ -z "$EXPECTED_VERSION" ]]; then
+  echo "错误：无法确定构建版本，不能验收产物" >&2
   exit 1
 fi
 
@@ -116,9 +122,9 @@ if (( ${#artifacts[@]} > 0 )); then
       ok "$(basename "$a") ($(du -h "$a" | cut -f1))"
       fresh_artifacts+=("$a")
     elif [[ -z "$a_version" ]]; then
-      bad "$(basename "$a") 的文件名里读不出版本，无法确认它属于当前基线 $EXPECTED_VERSION"
+      bad "$(basename "$a") 的文件名里读不出版本，无法确认它属于本次构建 $EXPECTED_VERSION"
     else
-      skip "$(basename "$a") 是 $a_version 的旧产物（当前基线 $EXPECTED_VERSION），跳过；要验它先跑 build.sh --all"
+      skip "$(basename "$a") 是 $a_version 的旧产物（本次构建 $EXPECTED_VERSION），跳过；要验它先跑 build.sh --all"
     fi
   done
 else
@@ -134,7 +140,7 @@ if [[ -x "$UNPACKED/deepseek-harness" ]]; then
     if [[ "$unpacked_version" == "$EXPECTED_VERSION" ]]; then
       ok "linux-unpacked 的 package.json 版本是 $unpacked_version"
     else
-      bad "linux-unpacked 是 $unpacked_version 的产物（当前基线 $EXPECTED_VERSION）——先重跑 build.sh --dir"
+      bad "linux-unpacked 是 $unpacked_version 的产物（本次构建 $EXPECTED_VERSION）——先重跑 build.sh --dir"
     fi
   else
     skip "读不到 linux-unpacked/resources/app/package.json 的版本"
@@ -250,7 +256,9 @@ fi
 # 这是记录在案的行为（不是缺陷），但它意味着 Platform 侧看到的是一台 macOS 客户端。
 if [[ -n "$NODE" && -f "$APPDSH/node_modules/@deepseek-ai/dsh-deepseek-account/lib/index.js" ]]; then
   platform_header="$("$NODE" --input-type=module -e "
-    const { platformClientHeaders } = await import('$APPDSH/node_modules/@deepseek-ai/dsh-deepseek-account/lib/index.js')
+    const { createRequire } = await import('node:module')
+    const require = createRequire('$APPDSH/package.json')
+    const { platformClientHeaders } = await import(require.resolve('@deepseek-ai/dsh-deepseek-account/client-metadata'))
     const c = { version: '0', locale: 'en-US', timezoneOffsetSeconds: 0 }
     process.stdout.write(['linux', 'darwin', 'null'].map(p =>
       p === 'null' ? platformClientHeaders(null, c)['x-client-platform']

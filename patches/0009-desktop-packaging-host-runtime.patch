@@ -37,9 +37,9 @@ index 37515c20..bf23b406 100644
 -  await preparePrimaryRuntime()
    await launchElectron()
  }
- 
+
 diff --git a/apps/desktop/scripts/sign-primary-runtime.ts b/apps/desktop/scripts/sign-primary-runtime.ts
-index d9a9b36c..e3b8fc40 100644
+index a15e3786..4dde1a7d 100644
 --- a/apps/desktop/scripts/sign-primary-runtime.ts
 +++ b/apps/desktop/scripts/sign-primary-runtime.ts
 @@ -76,7 +76,8 @@ async function main(): Promise<void> {
@@ -96,13 +96,13 @@ index 6c3c12c8..46672a14 100644
 +await smokePreparedRuntime(join(appRoot, 'dsh'),
 +  desktopNodeRuntime(packaged.platform, executable, join(resourcesRuntime, 'primary-runtime')), resourcesRuntime, descriptor)
 diff --git a/apps/desktop/scripts/smoke-prepared-runtime.ts b/apps/desktop/scripts/smoke-prepared-runtime.ts
-index e6afd574..87729bc7 100644
+index a67bc28c..0fbc8107 100644
 --- a/apps/desktop/scripts/smoke-prepared-runtime.ts
 +++ b/apps/desktop/scripts/smoke-prepared-runtime.ts
 @@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
  import { join, resolve } from 'node:path'
  import { promisify } from 'node:util'
- import { runtimeArchivePath } from '../../desktop-host/src/office-engine.ts'
+ import { runtimeArchivePath } from '../../desktop-host/src/cli.ts'
 -import { desktopNodeEnvironment } from '../src/node-environment.ts'
 +import { desktopNodeEnvironment, type DesktopNodeRuntime } from '../src/node-environment.ts'
  import type { DesktopRuntimeDescriptor } from '../src/runtime-tree.ts'
@@ -147,19 +147,20 @@ index e6afd574..87729bc7 100644
      await rm(cache, { recursive: true, force: true })
    }
 diff --git a/apps/desktop/scripts/smoke-runtime.ts b/apps/desktop/scripts/smoke-runtime.ts
-index bbc2d3e7..cc60507e 100644
+index fa2b2f5c..1a25e17d 100644
 --- a/apps/desktop/scripts/smoke-runtime.ts
 +++ b/apps/desktop/scripts/smoke-runtime.ts
-@@ -9,20 +9,21 @@ import { promisify } from 'node:util'
+@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
  import { fileURLToPath } from 'node:url'
  import { readPrimaryRuntime, workspaceDependencyPaths } from '../../../packages/skill/tool-workspace-dependencies/src/index.ts'
  import { DesktopHostProcess } from '../src/host-process.ts'
 +import type { DesktopNodeRuntime } from '../src/node-environment.ts'
  import { createPluginProfile } from '../src/project-manager.ts'
  import type { DesktopRuntimeDescriptor } from '../src/runtime-tree.ts'
- 
- /**
-  * Check CLI package operations, Host startup, its frontend, external plugins and real Office-to-PDF conversion.
+
+@@ -29,14 +30,14 @@ export function assertOfficeSkillsLoadable(results: ReadonlyArray<{ readonly nam
+  * Check CLI package operations, Host startup, its frontend, external plugins, packaged Office skill loading,
+  * and real Office rendering, conversion, and recalculation.
   * @param root - Materialized dsh resources.
 - * @param node - Prepared target Electron executable.
 + * @param node - Node runtime that will host the payload.
@@ -174,7 +175,7 @@ index bbc2d3e7..cc60507e 100644
  ): Promise<void> {
    const home = mkdtempSync(join(tmpdir(), 'dsh-desktop-smoke-'))
    const profile = join(home, 'profiles', 'desktop')
-@@ -59,9 +60,9 @@ export function apply(ctx) {
+@@ -73,9 +74,9 @@ export function apply(ctx) {
      writeFileSync(join(installedPlugin, 'bundle.yml'), `- insert:\n    - id: ${installedName}\n      name: ${installedName}\n      inject: [webServer]\n`)
      appendFileSync(join(profile, 'pnpm-workspace.yaml'), 'offline: true\nupdateNotifier: false\n')
      const cli = join(root, 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js')
@@ -228,7 +229,7 @@ index 3cda38c6..2aec2410 100644
 @@ -1,4 +1,4 @@
 -/** Exercise filtered Desktop native and HTML dependencies under its Electron Node runtime. */
 +/** Exercise filtered Desktop native and HTML dependencies under its shipped Node runtime. */
- 
+
  import assert from 'node:assert/strict'
  import { execFileSync } from 'node:child_process'
 @@ -14,7 +14,7 @@ const runtime = process.argv[2]

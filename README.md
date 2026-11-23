@@ -34,7 +34,7 @@ deb 装出来的那份**不能应用内自更新**（自更新要替换正在运
 
 ## 从源码构建
 
-当前基线为上游 `dsh-v0.2.2-rc.1`，需要 Node 24.9+、pnpm 11（自动使用上游声明的版本）。
+当前基线为上游 `dsh-v0.2.2-rc.5`，同一补丁集兼容 `0.2.2-rc.3`、`rc.4` 和 `rc.5`。需要 Node 24.9+、pnpm 11（自动使用上游声明的版本）。
 
 ```bash
 ./scripts/fetch-upstream.sh      # 拉上游源码到 ./upstream
@@ -46,7 +46,7 @@ deb 装出来的那份**不能应用内自更新**（自更新要替换正在运
 
 ```bash
 ./scripts/preflight.sh           # PKGBUILD 自洽 + 两条路径打补丁并逐字节比对 + 补丁树上的 host 面类型检查
-./scripts/preflight.sh --full    # 再加 CI 同款 build:lib（含 tsdown，慢，十几分钟）
+./scripts/preflight.sh --full    # 再加 CI 同款完整构建（含 Web 与聚合检查）
 ./scripts/preflight.sh --clean    # 跑完删掉 upstream/（含 node_modules，约 2.4G）
 ```
 

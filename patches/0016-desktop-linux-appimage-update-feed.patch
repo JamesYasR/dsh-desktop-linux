@@ -94,7 +94,7 @@ index 00000000..e7d8518e
 +  return { publicUrl: parsed.href.replace(/\/+$/u, ''), channel: 'nightly' }
 +}
 diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
-index 1202e11c..f38014a7 100644
+index dba25c47..5b29fbdb 100644
 --- a/apps/desktop/scripts/desktop-package-environment.mjs
 +++ b/apps/desktop/scripts/desktop-package-environment.mjs
 @@ -9,6 +9,7 @@ import { resolveDesktopAutoUpdateConfig } from './desktop-auto-update-environmen
@@ -112,9 +112,9 @@ index 1202e11c..f38014a7 100644
 -const LINUX_SETTING = /^DSH_DESKTOP_LINUX_(?:MAINTAINER|HOMEPAGE)$/u
 +const LINUX_SETTING = /^DSH_DESKTOP_LINUX_(?:MAINTAINER|HOMEPAGE|UPDATE_ORIGIN)$/u
  const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*|LINUX_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
- const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
 
-@@ -164,6 +165,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
+ /**
+@@ -129,6 +130,7 @@ export function validateDesktopPackageEnvironment(environment, target, options =
    if (target.platform === 'darwin') resolveMacOSPackageSettings(environment)
    else if (target.platform === 'win32') resolveWindowsPackageSettings(environment)
    if (target.platform === 'linux') {
@@ -123,7 +123,7 @@ index 1202e11c..f38014a7 100644
      if (!options.unsigned) throw new Error('desktop package: Linux artifacts are unsigned; pass --unsigned')
    }
 diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
-index 9ccd02ac..b18d3079 100644
+index a9eb9edb..8bf96377 100644
 --- a/apps/desktop/scripts/electron-builder-config.mjs
 +++ b/apps/desktop/scripts/electron-builder-config.mjs
 @@ -25,6 +25,7 @@ import { resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
@@ -134,7 +134,7 @@ index 9ccd02ac..b18d3079 100644
  import { desktopArtifactOutput, desktopTargetBuildPaths, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
  import { installWindowsDirectoryInstaller } from './windows-directory-installer.mjs'
  import { preserveWindowsRuntimeSignature, signWindowsCode } from './windows-runtime-signature.mjs'
-@@ -102,7 +103,11 @@ export function createElectronBuilderConfig(
+@@ -105,7 +106,11 @@ export function createElectronBuilderConfig(
    if (windowsSigner !== undefined) {
      installWindowsNsisBootstrapSigner({ sign: windowsSigner })
    }
